@@ -51,8 +51,24 @@ function Write-PatchgateLog {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'Logs must not pollute the pipeline')]
     param([string]$Message, [string]$Level = 'INFO')
     $line = '{0} {1} {2}' -f (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssK'), $Level, $Message
-    Add-Content -Path $LogFile -Value $line -Encoding UTF8
     Write-Host $line
+    # Share read/write: log shippers (e.g. the CloudWatch agent) keep this file open.
+    # A logging failure must never abort an installation.
+    try {
+        $stream = [IO.File]::Open($LogFile, [IO.FileMode]::Append, [IO.FileAccess]::Write,
+            ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        try {
+            $writer = New-Object IO.StreamWriter($stream, (New-Object Text.UTF8Encoding $false))
+            $writer.WriteLine($line)
+            $writer.Flush()
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
+    catch {
+        Write-Host "WARN could not write $LogFile ($($_.Exception.Message))"
+    }
 }
 
 function Save-State {

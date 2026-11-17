@@ -119,3 +119,13 @@ def test_accepts_compressed_plans_from_the_catalog(tmp_path: Path) -> None:
     code, state = run(tmp_path, encode_plan(doc))
     assert (code, state["status"]) == (0, "success")
     assert marker.exists()
+
+
+def test_locked_log_file_does_not_abort_installation(tmp_path: Path) -> None:
+    """A log shipper holding the log file open must not break the install."""
+    log_dir = tmp_path / "pd" / "Patchgate" / "logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "install.log").mkdir()  # a directory where the file should be: every write fails
+    step = {"agent": "demo", "method": "script", "script": "exit 0"}
+    code, state = run(tmp_path, plan(step))
+    assert (code, state["status"]) == (0, "success")
