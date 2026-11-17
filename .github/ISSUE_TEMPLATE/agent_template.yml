@@ -1,0 +1,27 @@
+name: Agent template request
+description: Request a new agent template for the catalog
+labels: ["catalog", "enhancement"]
+body:
+  - type: input
+    id: agent
+    attributes:
+      label: Agent / software name
+    validations:
+      required: true
+  - type: checkboxes
+    id: platforms
+    attributes:
+      label: Platforms
+      options:
+        - label: Linux
+        - label: Windows
+  - type: dropdown
+    id: method
+    attributes:
+      label: Install method
+      options: [choco, msi, exe, package (apt/dnf), script, not sure]
+  - type: textarea
+    id: docs
+    attributes:
+      label: Vendor installation docs
+      description: Links to official silent-install instructions.

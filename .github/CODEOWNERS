@@ -1,0 +1,8 @@
+# Default owner
+*                     @kevinfinalboss
+
+# Security-sensitive paths: changes here run code on every managed server
+/core/catalog/        @kevinfinalboss
+/core/scripts/        @kevinfinalboss
+/providers/*/terraform/ @kevinfinalboss
+/.github/workflows/   @kevinfinalboss
