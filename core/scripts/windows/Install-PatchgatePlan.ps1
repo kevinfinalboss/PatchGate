@@ -44,6 +44,7 @@ $DriftEventFile = Join-Path $Root 'drift-event.json'    # picked up and publishe
 $DriftIntervals = @{ '30m' = 1800; '1h' = 3600; '2h' = 7200; '6h' = 21600; '12h' = 43200; '24h' = 86400 }
 $DriftSlackSeconds = 120
 $script:HardeningRebootRequired = $false
+$script:AppsRebootRequired = $false
 
 # Chocolatey is bootstrapped from its pinned package, never from a remote install script.
 $ChocoVersion = '2.7.5'
@@ -164,6 +165,8 @@ function Get-VerifiedDownload {
 }
 
 function Get-Chocolatey {
+    # PATCHGATE_CHOCO_EXE lets tests point at a fake Chocolatey; it is never set in production.
+    if ($env:PATCHGATE_CHOCO_EXE) { return $env:PATCHGATE_CHOCO_EXE }
     $choco = Join-Path $env:ProgramData 'chocolatey\bin\choco.exe'
     if (Test-Path $choco) { return $choco }
     Write-PatchgateLog "installing Chocolatey $ChocoVersion from pinned package"
@@ -177,14 +180,123 @@ function Get-Chocolatey {
     return $choco
 }
 
-function Install-ChocoPackage {
-    param([string]$Name, [string]$Version)
+function Get-ChocoVersion {
+    # Installed version of a Chocolatey package, or $null.
+    param([string]$Name)
     $choco = Get-Chocolatey
-    $arguments = @('upgrade', $Name, '-y', '--no-progress', '--limit-output')
-    if ($Version) { $arguments += @('--version', $Version) }
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $output = & $choco list $Name --exact --limit-output 2>$null }
+    finally { $ErrorActionPreference = $previous }
+    foreach ($line in @($output)) {
+        $parts = "$line".Split('|')
+        if ($parts.Count -ge 2 -and $parts[0] -ieq $Name) { return $parts[1].Trim() }
+    }
+    return $null
+}
+
+function Invoke-ChocoChange {
+    # install (optionally pinned, allowing downgrades) | upgrade | remove. Returns the exit code.
+    param([string]$Action, [string]$Name, [string]$Version)
+    $choco = Get-Chocolatey
+    switch ($Action) {
+        'install' {
+            $arguments = @('upgrade', $Name, '-y', '--no-progress', '--limit-output')
+            if ($Version) { $arguments += @('--version', $Version, '--allow-downgrade') }
+        }
+        'upgrade' { $arguments = @('upgrade', $Name, '-y', '--no-progress', '--limit-output') }
+        'remove' { $arguments = @('uninstall', $Name, '-y', '--no-progress', '--limit-output') }
+        default { throw "unknown app action $Action" }
+    }
     $code = Invoke-Native -FilePath $choco -Arguments $arguments
-    if ($SuccessCodes -notcontains $code) { throw "choco failed for $Name (exit $code)" }
+    if ($SuccessCodes -notcontains $code) { throw "choco $Action $Name failed (exit $code)" }
     return $code
+}
+
+function Get-DesiredApp {
+    # Plan apps, plus the legacy 'chocolatey' list from older plans (present, profile, no prune).
+    param($Plan)
+    $apps = @(Get-Prop $Plan 'apps' @())
+    foreach ($legacy in @(Get-Prop $Plan 'chocolatey' @())) {
+        if ($legacy) {
+            $apps += [pscustomobject]@{ name = $legacy.name; version = (Get-Prop $legacy 'version'); ensure = 'present'; source = 'profile'; prune = $false }
+        }
+    }
+    return $apps | Where-Object { $_ }
+}
+
+function Invoke-AppReconcile {
+    # Bring applications to the plan's desired state and prune what Patchgate installed and no
+    # longer wants. Software Patchgate did not install is never removed by pruning.
+    param($Plan, [string]$Mode)
+    $desired = @(Get-DesiredApp $Plan)
+    $state = Read-State
+    $managed = @{}
+    if ($state.ContainsKey('managedApps') -and $state['managedApps']) {
+        foreach ($p in $state['managedApps'].PSObject.Properties) { $managed[$p.Name] = $p.Value }
+    }
+    $results = @()
+    if ($desired.Count -eq 0 -and $managed.Count -eq 0) { return $results }
+
+    $wanted = @{}
+    foreach ($app in $desired) {
+        $name = $app.name
+        $wanted[$name] = $true
+        $ensure = Get-Prop $app 'ensure' 'present'
+        $version = Get-Prop $app 'version'
+        $current = Get-ChocoVersion $name
+        $action = $null
+        if ($ensure -eq 'absent') { if ($current) { $action = 'remove' } }
+        elseif (-not $current) { $action = 'install' }
+        elseif ($ensure -eq 'latest') { $action = 'upgrade' }
+        elseif ($version -and $current -ne $version) { $action = 'install' }
+
+        if (-not $action) { $status = 'compliant'; $detail = if ($current) { $current } else { 'absent' } }
+        elseif ($Mode -eq 'audit') { $status = 'non-compliant'; $detail = "would $action (installed: $current)" }
+        else {
+            try {
+                if ((Invoke-ChocoChange -Action $action -Name $name -Version $version) -eq $RebootExitCode) {
+                    $script:AppsRebootRequired = $true
+                }
+                $after = Get-ChocoVersion $name
+                if ($action -eq 'remove') { $ok = -not $after }
+                elseif ($action -eq 'upgrade') { $ok = [bool]$after }
+                else { $ok = $after -and (-not $version -or $after -eq $version) }
+                $status = if (-not $ok) { 'failed' } elseif ($action -eq 'upgrade' -and $after -eq $current) { 'compliant' } else { 'remediated' }
+                $detail = "${action}: $current -> $after"
+            }
+            catch { $status = 'failed'; $detail = "$_" }
+        }
+        Write-PatchgateLog ("app {0,-32} {1,-13} {2}" -f $name, $status, $detail)
+        $results += [ordered]@{ item = "app:$name"; status = $status; detail = $detail }
+
+        if ($ensure -eq 'absent') { $managed.Remove($name) }
+        elseif ($Mode -ne 'audit' -and ($action -eq 'install' -or $managed.ContainsKey($name))) {
+            $managed[$name] = [ordered]@{ source = (Get-Prop $app 'source' ''); prune = [bool](Get-Prop $app 'prune' $false) }
+        }
+    }
+
+    foreach ($name in @($managed.Keys | Sort-Object)) {
+        $info = $managed[$name]
+        $prune = [bool](Get-Prop ([pscustomobject]$info) 'prune' $false)
+        if ($wanted.ContainsKey($name) -or -not $prune) { continue }
+        $source = Get-Prop ([pscustomobject]$info) 'source' ''
+        if ($Mode -eq 'audit') {
+            $results += [ordered]@{ item = "app:$name"; status = 'non-compliant'; detail = "would prune (from $source)" }
+            continue
+        }
+        try {
+            if (Get-ChocoVersion $name) { [void](Invoke-ChocoChange -Action 'remove' -Name $name) }
+            $results += [ordered]@{ item = "app:$name"; status = 'remediated'; detail = "pruned (was from $source)" }
+            Write-PatchgateLog ("app {0,-32} {1,-13} pruned (was from {2})" -f $name, 'remediated', $source)
+            $managed.Remove($name)
+        }
+        catch {
+            $results += [ordered]@{ item = "app:$name"; status = 'failed'; detail = "prune: $_" }
+        }
+    }
+    if ($Mode -ne 'audit') { Save-State @{ managedApps = $managed } }
+    return $results
 }
 
 function Test-Step {
@@ -215,7 +327,7 @@ function Install-Step {
     switch ($Step.method) {
         'choco' {
             $version = if ($props -contains 'version') { $Step.version } else { $null }
-            $code = Install-ChocoPackage -Name $Step.package -Version $version
+            $code = Invoke-ChocoChange -Action install -Name $Step.package -Version $version
         }
         { $_ -in 'msi', 'exe' } {
             $file = Get-VerifiedDownload -Url $Step.source -Sha256 $Step.sha256 `
@@ -370,6 +482,9 @@ function Invoke-Drift {
     finally {
         Remove-Item -Path $work -Recurse -Force -ErrorAction SilentlyContinue
     }
+    foreach ($a in @(Invoke-AppReconcile -Plan $plan -Mode $mode)) {
+        if ($a.status -ne 'compliant') { $findings += [ordered]@{ item = $a.item; status = $a.status } }
+    }
     foreach ($r in @(Invoke-Hardening -Hardening (Get-Prop $plan 'hardening') -Mode $mode)) {
         if ($r.status -ne 'compliant') { $findings += [ordered]@{ item = "control:$($r.control)"; status = $r.status } }
     }
@@ -458,13 +573,9 @@ try {
         $results += @{ agent = $step.agent; status = 'ok' }
     }
 
-    $rebootNeeded = $false
-    foreach ($package in $plan.chocolatey) {
-        $version = if ($package.PSObject.Properties.Name -contains 'version') { $package.version } else { $null }
-        Write-PatchgateLog "== chocolatey $($package.name)"
-        if ((Install-ChocoPackage -Name $package.name -Version $version) -eq $RebootExitCode) { $rebootNeeded = $true }
-        $results += @{ agent = "choco:$($package.name)"; status = 'ok' }
-    }
+    $appResults = @(Invoke-AppReconcile -Plan $plan -Mode 'enforce')
+    $failedApps = @($appResults | Where-Object { $_.status -eq 'failed' } | ForEach-Object { $_.item })
+    if ($failedApps.Count -gt 0) { throw "applications could not be reconciled: $($failedApps -join ', ')" }
 
     $controls = @(Invoke-Hardening -Hardening (Get-Prop $plan 'hardening') -Mode 'enforce')
     $failed = @($controls | Where-Object { $_.status -eq 'failed' } | ForEach-Object { $_.control })
@@ -487,5 +598,5 @@ Save-State @{
 }
 Write-PatchgateLog "SUCCESS: profile $($plan.profile) applied"
 Write-Output (@{ patchgate = @{ profile = $plan.profile; digest = $plan.digest; steps = $results; hardening = $hardeningSummary } } | ConvertTo-Json -Depth 5 -Compress)
-if ($rebootNeeded -or $script:HardeningRebootRequired) { exit $RebootExitCode }
+if ($script:AppsRebootRequired -or $script:HardeningRebootRequired) { exit $RebootExitCode }
 exit 0

@@ -392,6 +392,139 @@ def run_ansible(hardening: dict[str, Any], mode: str) -> list[dict[str, str]]:
     return results
 
 
+# ---------------------------------------------------------------- applications
+
+
+def installed_version(manager: str, name: str) -> str | None:
+    """Installed version of a package ("<version>-<release>" on rpm systems), or None."""
+    if manager == "apt-get":
+        command = ["dpkg-query", "-W", "-f=${Status}|${Version}", name]
+    else:
+        command = ["rpm", "-q", "--qf", "installed|%{VERSION}-%{RELEASE}", name]
+    proc = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
+    if proc.returncode != 0:
+        return None
+    status, _, version = proc.stdout.strip().rpartition("|")
+    if manager == "apt-get" and status != "install ok installed":
+        return None
+    return version or None
+
+
+def version_matches(installed: str, wanted: str) -> bool:
+    """'2.40.1' matches an installed '2.40.1-1.amzn2023'; a full version must match exactly."""
+    return installed == wanted or installed.split("-")[0] == wanted
+
+
+def package_spec(manager: str, name: str, version: str | None) -> str:
+    if not version:
+        return name
+    return f"{name}={version}" if manager == "apt-get" else f"{name}-{version}"
+
+
+def change_app(manager: str, action: str, name: str, version: str | None = None) -> None:
+    env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+    spec = package_spec(manager, name, version)
+    if manager == "apt-get":
+        commands = {
+            "install": ["apt-get", "install", "-y", "-q", "--allow-downgrades", spec],
+            "upgrade": ["apt-get", "install", "-y", "-q", "--only-upgrade", name],
+            "remove": ["apt-get", "remove", "-y", "-q", name],
+        }
+        if action != "remove":
+            run(["apt-get", "update", "-q"], env=env)
+    else:
+        commands = {
+            "install": [manager, "install", "-y", "-q", spec],
+            "upgrade": [manager, "upgrade", "-y", "-q", name],
+            "remove": [manager, "remove", "-y", "-q", name],
+        }
+    try:
+        run(commands[action], env=env)
+    except InstallError:
+        if action == "install" and version and manager != "apt-get":
+            run([manager, "downgrade", "-y", "-q", spec], env=env)  # pinned to an older version
+        else:
+            raise
+
+
+def reconcile_apps(plan: dict[str, Any], mode: str) -> list[dict[str, str]]:
+    """Bring applications to the plan's desired state; prune what Patchgate installed and no
+    longer wants. Software Patchgate did not install is never removed by pruning."""
+    desired: list[dict[str, Any]] = plan.get("apps") or []
+    if not desired and not read_state().get("managedApps"):
+        return []
+    manager = detect_package_manager()
+    state = read_state()
+    managed: dict[str, dict[str, Any]] = state.get("managedApps", {})
+    results: list[dict[str, str]] = []
+
+    def record(name: str, status: str, detail: str) -> None:
+        log.info("app %-32s %-13s %s", name, status, detail)
+        results.append({"item": f"app:{name}", "status": status, "detail": detail})
+
+    wanted_names = {app["name"] for app in desired}
+    for app in desired:
+        name, ensure, version = app["name"], app.get("ensure", "present"), app.get("version")
+        current = installed_version(manager, name)
+        if ensure == "absent":
+            action = "remove" if current else None
+        elif current is None:
+            action = "install"
+        elif ensure == "latest":
+            action = "upgrade"
+        elif version and not version_matches(current, version):
+            action = "install"
+        else:
+            action = None
+
+        if action is None:
+            record(name, "compliant", current or "absent")
+        elif mode == "audit":
+            record(name, "non-compliant", f"would {action} (installed: {current or 'none'})")
+        elif action == "upgrade":
+            try:
+                change_app(manager, "upgrade", name)
+                after = installed_version(manager, name)
+                record(name, "remediated" if after != current else "compliant", after or "?")
+            except InstallError as exc:
+                record(name, "failed", str(exc))
+        else:
+            try:
+                change_app(manager, action, name, version if action == "install" else None)
+                after = installed_version(manager, name)
+                ok = (
+                    after is None
+                    if action == "remove"
+                    else after is not None and (not version or version_matches(after, version))
+                )
+                record(name, "remediated" if ok else "failed", f"{action}: {current} -> {after}")
+            except InstallError as exc:
+                record(name, "failed", str(exc))
+
+        if ensure == "absent":
+            managed.pop(name, None)
+        elif mode != "audit" and (action == "install" or name in managed):
+            managed[name] = {"source": app.get("source", ""), "prune": app.get("prune", False)}
+
+    for name, info in sorted(managed.items()):
+        if name in wanted_names or not info.get("prune"):
+            continue
+        if mode == "audit":
+            record(name, "non-compliant", f"would prune (from {info.get('source')})")
+            continue
+        try:
+            if installed_version(manager, name):
+                change_app(manager, "remove", name)
+            record(name, "remediated", f"pruned (was from {info.get('source')})")
+            managed.pop(name)
+        except InstallError as exc:
+            record(name, "failed", f"prune: {exc}")
+
+    if mode != "audit":
+        update_state(managedApps=managed)
+    return results
+
+
 def execute(plan: dict[str, Any]) -> dict[str, Any]:
     if plan.get("kind") != "InstallPlan" or plan.get("platform") != "linux":
         raise ValueError("not a linux InstallPlan")
@@ -403,6 +536,10 @@ def execute(plan: dict[str, Any]) -> dict[str, Any]:
             install_step(step, manager, Path(tmp))
             validate_step(step)
             results.append({"agent": step["agent"], "status": "ok"})
+    apps = reconcile_apps(plan, "enforce")
+    failed_apps = [a["item"] for a in apps if a["status"] == "failed"]
+    if failed_apps:
+        raise InstallError(f"applications could not be reconciled: {', '.join(failed_apps)}")
     controls = apply_hardening(plan.get("hardening"), "enforce")
     failed = [c["control"] for c in controls if c["status"] == "failed"]
     if failed:
@@ -411,6 +548,7 @@ def execute(plan: dict[str, Any]) -> dict[str, Any]:
         "profile": plan["profile"],
         "digest": plan["digest"],
         "steps": results,
+        "apps": summarize([{"status": a["status"]} for a in apps]),
         "hardening": summarize(controls),
     }
 
@@ -463,6 +601,9 @@ def run_drift(force: bool = False) -> int:
             except InstallError as exc:
                 log.error("%s", exc)
                 findings.append({"item": f"agent:{step['agent']}", "status": "failed"})
+    for app in reconcile_apps(plan, mode):
+        if app["status"] != "compliant":
+            findings.append({"item": app["item"], "status": app["status"]})
     for result in apply_hardening(plan.get("hardening"), mode):
         if result["status"] != "compliant":
             findings.append({"item": f"control:{result['control']}", "status": result["status"]})

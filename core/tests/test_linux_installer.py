@@ -433,3 +433,140 @@ def test_ansible_results_accept_role_prefixed_task_names(installer: ModuleType) 
         ("1.1.1.1", "remediated"),
         ("5.3", "compliant"),
     ]
+
+
+# ---------------------------------------------------------------- applications
+
+
+class FakePackages:
+    """In-memory package manager: name -> installed version."""
+
+    def __init__(self, installed: dict[str, str] | None = None, latest: str = "9.9") -> None:
+        self.installed = dict(installed or {})
+        self.latest = latest
+        self.calls: list[tuple[str, str, str | None]] = []
+        self.broken: set[str] = set()
+
+    def version(self, manager: str, name: str) -> str | None:
+        return self.installed.get(name)
+
+    def change(self, manager: str, action: str, name: str, version: str | None = None) -> None:
+        self.calls.append((action, name, version))
+        if action == "remove":
+            self.installed.pop(name, None)
+        elif action == "upgrade":
+            self.installed[name] = self.latest
+        else:
+            self.installed[name] = version or self.latest
+
+
+@pytest.fixture
+def packages(installer: ModuleType, monkeypatch: pytest.MonkeyPatch) -> FakePackages:
+    fake = FakePackages()
+
+    def change(manager: str, action: str, name: str, version: str | None = None) -> None:
+        if name in fake.broken:
+            fake.calls.append((action, name, version))
+            raise installer.InstallError(f"{action} {name} failed")
+        fake.change(manager, action, name, version)
+
+    monkeypatch.setattr(installer, "installed_version", fake.version)
+    monkeypatch.setattr(installer, "change_app", change)
+    return fake
+
+
+def app_plan(*apps: dict[str, Any]) -> Any:
+    doc = plan()
+    doc["apps"] = list(apps)
+    return doc
+
+
+def statuses(installer: ModuleType, doc: Any, mode: str = "enforce") -> dict[str, str]:
+    return {r["item"]: r["status"] for r in installer.reconcile_apps(doc, mode)}
+
+
+def test_present_installs_missing_and_pins_versions(
+    installer: ModuleType, packages: FakePackages
+) -> None:
+    packages.installed = {"git": "2.39.0-1.amzn2023"}
+    doc = app_plan(
+        {"name": "jq", "ensure": "present", "source": "appset:tools", "prune": True},
+        {"name": "git", "ensure": "present", "version": "2.40.1", "source": "profile"},
+    )
+    assert statuses(installer, doc) == {"app:jq": "remediated", "app:git": "remediated"}
+    assert packages.installed["git"] == "2.40.1"
+    assert statuses(installer, doc) == {"app:jq": "compliant", "app:git": "compliant"}
+
+
+def test_version_with_release_suffix_is_compliant(
+    installer: ModuleType, packages: FakePackages
+) -> None:
+    packages.installed = {"git": "2.40.1-1.amzn2023"}
+    doc = app_plan({"name": "git", "version": "2.40.1", "source": "profile"})
+    assert statuses(installer, doc) == {"app:git": "compliant"}
+    assert packages.calls == []
+
+
+def test_latest_upgrades_and_absent_removes(installer: ModuleType, packages: FakePackages) -> None:
+    packages.installed = {"nginx": "1.0", "telnet": "0.17"}
+    doc = app_plan(
+        {"name": "nginx", "ensure": "latest", "source": "profile"},
+        {"name": "telnet", "ensure": "absent", "source": "profile"},
+    )
+    assert statuses(installer, doc) == {"app:nginx": "remediated", "app:telnet": "remediated"}
+    assert packages.installed == {"nginx": "9.9"}
+
+
+def test_prune_removes_only_what_patchgate_installed(
+    installer: ModuleType, packages: FakePackages, tmp_path: Path
+) -> None:
+    packages.installed = {"vim": "9.0"}  # installed by someone else
+    with_tools = app_plan(
+        {"name": "jq", "source": "appset:tools", "prune": True},
+        {"name": "vim", "source": "appset:tools", "prune": True},
+    )
+    statuses(installer, with_tools)
+    state = json.loads((state_dir(tmp_path) / "state.json").read_text())
+    assert set(state["managedApps"]) == {"jq"}  # vim was already there: not managed
+
+    without_tools = app_plan()
+    assert statuses(installer, without_tools) == {"app:jq": "remediated"}
+    assert "jq" not in packages.installed and "vim" in packages.installed
+
+
+def test_apps_from_non_pruning_sources_are_kept(
+    installer: ModuleType, packages: FakePackages
+) -> None:
+    statuses(installer, app_plan({"name": "htop", "source": "profile", "prune": False}))
+    assert statuses(installer, app_plan()) == {}
+    assert "htop" in packages.installed
+
+
+def test_audit_mode_reports_without_changing(installer: ModuleType, packages: FakePackages) -> None:
+    doc = app_plan({"name": "jq", "source": "appset:tools", "prune": True})
+    assert statuses(installer, doc, "audit") == {"app:jq": "non-compliant"}
+    assert packages.calls == []
+
+
+def test_failed_app_fails_bootstrap(installer: ModuleType, packages: FakePackages) -> None:
+    packages.broken = {"jq"}
+    doc = app_plan({"name": "jq", "source": "appset:tools", "prune": True})
+    assert installer.main(["--plan-b64", b64(doc)]) == 1
+
+
+def test_drift_reinstalls_removed_app(
+    installer: ModuleType, packages: FakePackages, tmp_path: Path
+) -> None:
+    doc = app_plan({"name": "jq", "source": "appset:tools", "prune": True})
+    assert installer.main(["--plan-b64", b64(doc)]) == 0
+    packages.installed.pop("jq")  # someone removes it by hand
+    assert installer.main(["--drift", "--force"]) == 0
+    assert "jq" in packages.installed
+    event = json.loads((state_dir(tmp_path) / "drift-event.json").read_text())
+    assert {"item": "app:jq", "status": "remediated"} in event["findings"]
+
+
+def test_package_spec_per_manager(installer: ModuleType) -> None:
+    assert installer.package_spec("dnf", "git", "2.40.1") == "git-2.40.1"
+    assert installer.package_spec("apt-get", "git", "1:2.40.1") == "git=1:2.40.1"
+    assert installer.package_spec("dnf", "git", None) == "git"

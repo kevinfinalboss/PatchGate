@@ -211,3 +211,110 @@ def test_drift_respects_interval(tmp_path: Path) -> None:
 
 def test_drift_without_applied_plan_is_a_no_op(tmp_path: Path) -> None:
     assert run(tmp_path, None, "-Drift")[0] == 0
+
+
+# ---------------------------------------------------------------- applications
+
+FAKE_CHOCO = Path(__file__).resolve().parent / "fixtures" / "fake_choco.ps1"
+
+
+def run_apps(
+    tmp_path: Path, encoded: str | None, *extra: str, broken: str = ""
+) -> tuple[int, dict[str, Any], dict[str, str]]:
+    db = tmp_path / "choco.json"
+    os.environ["PATCHGATE_CHOCO_EXE"] = str(FAKE_CHOCO)
+    os.environ["PATCHGATE_FAKE_CHOCO_DB"] = str(db)
+    os.environ["PATCHGATE_FAKE_CHOCO_BROKEN"] = broken
+    try:
+        code, state = run(tmp_path, encoded, *extra)
+    finally:
+        for key in (
+            "PATCHGATE_CHOCO_EXE",
+            "PATCHGATE_FAKE_CHOCO_DB",
+            "PATCHGATE_FAKE_CHOCO_BROKEN",
+        ):
+            os.environ.pop(key, None)
+    packages = json.loads(db.read_text()) if db.exists() else {}
+    return code, state, packages
+
+
+def with_apps(*apps: dict[str, Any], digest: str = "sha256:apps") -> str:
+    doc = json.loads(base64.b64decode(plan(digest=digest)))
+    doc["apps"] = list(apps)
+    return base64.b64encode(json.dumps(doc).encode()).decode()
+
+
+def test_apps_installed_pinned_and_pruned(tmp_path: Path) -> None:
+    dotnet = {
+        "name": "dotnet-8.0-runtime",
+        "version": "8.0.34",
+        "source": "appset:dotnet8",
+        "prune": True,
+    }
+    seven = {"name": "7zip", "source": "profile", "prune": False}
+    code, state, packages = run_apps(tmp_path, with_apps(dotnet, seven))
+    assert code == 0
+    assert packages == {"dotnet-8.0-runtime": "8.0.34", "7zip": "9.9"}
+    assert set(state["managedApps"]) == {"dotnet-8.0-runtime", "7zip"}
+
+    # The dotnet8 set is removed from the instance: pruned; the profile app stays.
+    code, state, packages = run_apps(tmp_path, with_apps(seven, digest="sha256:v2"))
+    assert code == 0
+    assert packages == {"7zip": "9.9"}
+    assert set(state["managedApps"]) == {"7zip"}
+
+
+def test_app_version_change_and_absent(tmp_path: Path) -> None:
+    (tmp_path / "choco.json").write_text(json.dumps({"nodejs-lts": "20.0.0", "putty": "0.80"}))
+    code, _, packages = run_apps(
+        tmp_path,
+        with_apps(
+            {
+                "name": "nodejs-lts",
+                "version": "26.13.1",
+                "source": "appset:nodejs-lts",
+                "prune": True,
+            },
+            {"name": "putty", "ensure": "absent", "source": "profile", "prune": False},
+        ),
+    )
+    assert code == 0
+    assert packages == {"nodejs-lts": "26.13.1"}
+
+
+def test_unmanaged_software_is_never_pruned(tmp_path: Path) -> None:
+    (tmp_path / "choco.json").write_text(json.dumps({"git": "2.40.0"}))  # installed by someone else
+    app = {"name": "git", "source": "appset:devtools", "prune": True}
+    run_apps(tmp_path, with_apps(app))
+    _, _, packages = run_apps(tmp_path, with_apps(digest="sha256:v2"))
+    assert packages == {"git": "2.40.0"}
+
+
+def test_failed_app_fails_bootstrap(tmp_path: Path) -> None:
+    app = {"name": "broken-app", "source": "profile", "prune": False}
+    code, state, _ = run_apps(tmp_path, with_apps(app), broken="broken-app")
+    assert code == 1
+    assert "broken-app" in state["error"]
+
+
+def test_drift_reinstalls_app_removed_by_hand(tmp_path: Path) -> None:
+    app = {
+        "name": "dotnet-8.0-runtime",
+        "version": "8.0.34",
+        "source": "appset:dotnet8",
+        "prune": True,
+    }
+    assert run_apps(tmp_path, with_apps(app))[0] == 0
+    (tmp_path / "choco.json").write_text("{}")  # someone uninstalls it
+    code, _, packages = run_apps(tmp_path, None, "-Drift", "-Force")
+    assert code == 0
+    assert packages == {"dotnet-8.0-runtime": "8.0.34"}
+    event = read(tmp_path / "pd" / "Patchgate" / "drift-event.json")
+    assert {"item": "app:dotnet-8.0-runtime", "status": "remediated"} in event["findings"]
+
+
+def test_legacy_chocolatey_field_still_works(tmp_path: Path) -> None:
+    doc = json.loads(base64.b64decode(plan()))
+    doc["chocolatey"] = [{"name": "7zip"}]
+    code, _, packages = run_apps(tmp_path, base64.b64encode(json.dumps(doc).encode()).decode())
+    assert code == 0 and packages == {"7zip": "9.9"}
