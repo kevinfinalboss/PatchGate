@@ -163,7 +163,7 @@ resource "aws_ssm_document" "bootstrap" {
 resource "aws_ssm_association" "drift" {
   association_name            = "patchgate-drift"
   name                        = aws_ssm_document.bootstrap["Patchgate-Drift"].name
-  schedule_expression         = "rate(30 minutes)" # the executor skips runs until the profile's interval is due
+  schedule_expression         = "cron(0/30 * * * ? *)" # every 30 min; the executor skips runs until the profile's interval is due
   apply_only_at_cron_interval = true
   max_concurrency             = "50%"
   max_errors                  = "100%"
