@@ -18,7 +18,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[3]
 SSM_DIR = ROOT / "providers" / "aws" / "ssm"
 TEMPLATE = ROOT / "providers" / "aws" / "stacksets" / "spoke.template.json"
-MAX_TEMPLATE_BYTES = 51_200  # CloudFormation inline TemplateBody limit
+# The template is uploaded to S3 (TemplateURL limit: 1 MB); stay far below it.
+MAX_TEMPLATE_BYTES = 460_800
 
 HUB_ROLE_NAMES = ["patchgate-hub-orchestrator", "patchgate-hub-resolver"]
 LOG_GROUPS = {
@@ -36,7 +37,7 @@ PLAN_PARAMETER = {
 }
 
 
-def linux_document(installer: str) -> dict[str, Any]:
+def linux_document(installer: str, ansible_lock: str) -> dict[str, Any]:
     return {
         "schemaVersion": "2.2",
         "description": "Patchgate bootstrap for Linux: applies an install plan with the core installer.",
@@ -53,6 +54,8 @@ def linux_document(installer: str) -> dict[str, Any]:
                         "install -d -m 0700 /opt/patchgate",
                         "cat > /opt/patchgate/patchgate_install.py <<'PATCHGATE_EOF'\n"
                         f"{installer}\nPATCHGATE_EOF",
+                        "cat > /opt/patchgate/ansible-requirements.txt <<'PATCHGATE_EOF'\n"
+                        f"{ansible_lock}\nPATCHGATE_EOF",
                         "python3 /opt/patchgate/patchgate_install.py --plan-b64 '{{ Plan }}'",
                     ],
                 },
@@ -182,9 +185,10 @@ def drift_document() -> dict[str, Any]:
 def documents() -> dict[str, dict[str, Any]]:
     scripts = ROOT / "core" / "scripts"
     linux = (scripts / "linux" / "patchgate_install.py").read_text()
+    ansible_lock = (scripts / "linux" / "ansible-requirements.txt").read_text()
     windows = (scripts / "windows" / "Install-PatchgatePlan.ps1").read_text().replace("\r\n", "\n")
     return {
-        "Patchgate-Bootstrap-Linux": linux_document(linux),
+        "Patchgate-Bootstrap-Linux": linux_document(linux, ansible_lock),
         "Patchgate-Bootstrap-Windows": windows_document(windows),
         DRIFT_DOCUMENT: drift_document(),
     }

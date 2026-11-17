@@ -1,0 +1,16 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Profile
+metadata:
+  name: cis-linux
+  description: Amazon Linux 2023 hardened with the full CIS Level 1 benchmark (ansible engine).
+spec:
+  platform: linux
+  agents: [cloudwatch-agent, clamav]
+  hardening:
+    engine: ansible
+    baseline: amazon2023-cis-level1
+  drift:
+    # A full benchmark run takes minutes; check less often than the native engine.
+    interval: 6h
+    mode: enforce
+  ring: 0

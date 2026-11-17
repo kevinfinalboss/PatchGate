@@ -17,9 +17,11 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import urllib.request
@@ -34,6 +36,17 @@ COMPLIANCE_FILE = STATE_DIR / "compliance.json"  # evidence: last result of ever
 DRIFT_EVENT_FILE = STATE_DIR / "drift-event.json"  # picked up and published by the provider
 DRIFT_INTERVALS = {"30m": 1800, "1h": 3600, "2h": 7200, "6h": 21600, "12h": 43200, "24h": 86400}
 DRIFT_SLACK_SECONDS = 120  # schedulers fire slightly early/late
+
+# "ansible" hardening engine (ADR 0007): a pinned runtime in its own venv; modules run on the
+# system Python, which has the distribution's package-manager bindings.
+PATCHGATE_HOME = Path("/opt/patchgate")
+ANSIBLE_VENV = PATCHGATE_HOME / "ansible"
+ANSIBLE_COLLECTIONS = PATCHGATE_HOME / "ansible-collections"
+BASELINES_DIR = PATCHGATE_HOME / "baselines"
+ANSIBLE_LOCK = Path(__file__).resolve().with_name("ansible-requirements.txt")
+ANSIBLE_PYTHONS = ("python3.12", "python3.13", "python3.14", "python3")
+CIS_ID = re.compile(r"^\s*(\d+(?:\.\d+)+)\b")
+STATUS_RANK = {"compliant": 0, "remediated": 1, "non-compliant": 2, "failed": 3}
 DOWNLOAD_TIMEOUT = 300
 VALIDATE_ATTEMPTS = 5
 VALIDATE_DELAY_SECONDS = 6
@@ -162,15 +175,34 @@ def run_quiet(command: str) -> bool:
     return proc.returncode == 0
 
 
-def apply_controls(hardening: dict[str, Any] | None, mode: str) -> list[dict[str, str]]:
-    """Run the 'controls' engine. Returns one result per control.
+def apply_hardening(hardening: dict[str, Any] | None, mode: str) -> list[dict[str, str]]:
+    """Run the profile's hardening engine and record evidence. Returns one result per control.
 
     Status: compliant | remediated | non-compliant (audit) | failed (remediation did not fix it).
     """
     if not isinstance(hardening, dict):  # absent, or "none" in plans from older catalogs
         return []
-    if hardening.get("engine") != "controls":
-        raise InstallError(f"unsupported hardening engine: {hardening.get('engine')}")
+    engine = hardening.get("engine")
+    if engine == "controls":
+        results = run_controls(hardening, mode)
+    elif engine == "ansible":
+        results = run_ansible(hardening, mode)
+    else:
+        raise InstallError(f"unsupported hardening engine: {engine}")
+    write_json(
+        COMPLIANCE_FILE,
+        {
+            "engine": engine,
+            "level": hardening.get("level") or hardening.get("baseline"),
+            "mode": mode,
+            "checkedAt": now_iso(),
+            "controls": results,
+        },
+    )
+    return results
+
+
+def run_controls(hardening: dict[str, Any], mode: str) -> list[dict[str, str]]:
     results = []
     for control in hardening["controls"]:
         name = control["name"]
@@ -186,15 +218,176 @@ def apply_controls(hardening: dict[str, Any] | None, mode: str) -> list[dict[str
             status = "remediated" if run_quiet(control["check"]) else "failed"
         log.info("control %-32s %s", name, status)
         results.append({"control": name, "cis": control.get("cis", ""), "status": status})
-    write_json(
-        COMPLIANCE_FILE,
-        {
-            "level": hardening.get("level"),
-            "mode": mode,
-            "checkedAt": now_iso(),
-            "controls": results,
-        },
-    )
+    return results
+
+
+# ---------------------------------------------------------------- ansible engine
+
+
+def python_for_ansible() -> str:
+    for candidate in ANSIBLE_PYTHONS:
+        path = shutil.which(candidate)
+        if not path:
+            continue
+        version = subprocess.run(  # noqa: S603
+            [path, "-c", "import sys; print(sys.version_info >= (3, 12))"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        if version == "True":
+            return path
+    install_packages(detect_package_manager(), ["python3.12"])
+    path = shutil.which("python3.12")
+    if not path:
+        raise InstallError("python3.12 is required for the ansible engine")
+    return path
+
+
+def ensure_ansible_runtime() -> Path:
+    """Create (once per lock version) a venv with the hash-pinned Ansible runtime."""
+    lock_digest = sha256_file(ANSIBLE_LOCK)
+    marker = ANSIBLE_VENV / ".patchgate-lock"
+    if marker.exists() and marker.read_text().strip() == lock_digest:
+        return ANSIBLE_VENV / "bin"
+    if ANSIBLE_VENV.exists():
+        shutil.rmtree(ANSIBLE_VENV)
+    run([python_for_ansible(), "-m", "venv", str(ANSIBLE_VENV)])
+    pip = str(ANSIBLE_VENV / "bin" / "pip")
+    run([pip, "install", "--quiet", "--require-hashes", "--only-binary", ":all:", "--no-deps",
+         "-r", str(ANSIBLE_LOCK)])  # fmt: skip
+    marker.write_text(lock_digest)
+    return ANSIBLE_VENV / "bin"
+
+
+def safe_extract(archive: Path, dest: Path) -> None:
+    """Extract a tar.gz, rejecting absolute paths, '..', devices and links leaving dest."""
+    dest = dest.resolve()
+    with tarfile.open(archive, "r:gz") as tar:
+        for member in tar.getmembers():
+            target = (dest / member.name).resolve()
+            if not str(target).startswith(str(dest) + os.sep) and target != dest:
+                raise InstallError(f"unsafe path in archive: {member.name}")
+            if member.isdev():
+                raise InstallError(f"device file in archive: {member.name}")
+            if member.issym() or member.islnk():
+                base = dest if member.islnk() else target.parent
+                link = (base / member.linkname).resolve()
+                if not str(link).startswith(str(dest) + os.sep):
+                    raise InstallError(f"link escaping archive: {member.name}")
+        if hasattr(tarfile, "data_filter"):  # Python 3.12+ and recent 3.9-3.11 patch releases
+            tar.extractall(dest, filter="data")
+        else:
+            tar.extractall(dest)  # noqa: S202 - members validated above
+
+
+def ensure_baseline(hardening: dict[str, Any], bin_dir: Path, workdir: Path) -> Path:
+    """Download and verify the baseline and its collections; returns the playbook path."""
+    target = BASELINES_DIR / f"{hardening['baseline']}-{hardening['sha256'][:12]}"
+    if not (target / ".patchgate-complete").exists():
+        archive = download(hardening["source"], hardening["sha256"], workdir / "baseline.tar.gz")
+        unpacked = workdir / "baseline"
+        unpacked.mkdir()
+        safe_extract(archive, unpacked)
+        entries = list(unpacked.iterdir())
+        root = entries[0] if len(entries) == 1 and entries[0].is_dir() else unpacked
+        if target.exists():
+            shutil.rmtree(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(root), str(target))
+        for collection in hardening.get("collections", []):
+            tarball = download(
+                collection["source"], collection["sha256"], workdir / f"{collection['name']}.tar.gz"
+            )
+            run([str(bin_dir / "ansible-galaxy"), "collection", "install", "--no-deps", "--offline",
+                 "--force", "-p", str(ANSIBLE_COLLECTIONS), str(tarball)])  # fmt: skip
+        (target / ".patchgate-complete").write_text(now_iso())
+    playbook: Path = (target / str(hardening["playbook"])).resolve()
+    if not str(playbook).startswith(str(target.resolve()) + os.sep) or not playbook.exists():
+        raise InstallError(f"playbook not found in baseline: {hardening['playbook']}")
+    return playbook
+
+
+def parse_ansible_results(report: dict[str, Any], mode: str) -> list[dict[str, str]]:
+    """Map ansible.posix.json output to per-CIS-rule results (worst status per rule wins)."""
+    rules: dict[str, dict[str, str]] = {}
+    for play in report.get("plays", []):
+        for task in play.get("tasks", []):
+            name = str(task.get("task", {}).get("name", ""))
+            match = CIS_ID.match(name)
+            if not match:
+                continue
+            for host in task.get("hosts", {}).values():
+                if host.get("skipped"):
+                    continue
+                if host.get("failed") or host.get("unreachable"):
+                    status = "failed"
+                elif host.get("changed"):
+                    status = "non-compliant" if mode == "audit" else "remediated"
+                else:
+                    status = "compliant"
+                cis = match.group(1)
+                current = rules.get(cis)
+                if current is None or STATUS_RANK[status] > STATUS_RANK[current["status"]]:
+                    rules[cis] = {
+                        "control": f"cis-{cis}",
+                        "cis": cis,
+                        "status": status,
+                        "title": name[:160],
+                    }
+    return [rules[k] for k in sorted(rules, key=lambda c: [int(p) for p in c.split(".")])]
+
+
+def failed_tasks(report: dict[str, Any]) -> list[str]:
+    """Names and messages of failed tasks, including non-rule tasks such as prechecks."""
+    failures = []
+    for play in report.get("plays", []):
+        for task in play.get("tasks", []):
+            for host in task.get("hosts", {}).values():
+                if host.get("failed") or host.get("unreachable"):
+                    message = str(host.get("msg", ""))[:300]
+                    failures.append(f"{task.get('task', {}).get('name', '?')}: {message}")
+    return failures[:5]
+
+
+def run_ansible(hardening: dict[str, Any], mode: str) -> list[dict[str, str]]:
+    bin_dir = ensure_ansible_runtime()
+    with tempfile.TemporaryDirectory(prefix="patchgate-ansible-") as tmp:
+        playbook = ensure_baseline(hardening, bin_dir, Path(tmp))
+        variables = Path(tmp) / "vars.json"
+        variables.write_text(json.dumps(hardening.get("variables", {})))
+        command = [str(bin_dir / "ansible-playbook"), "-i", "localhost,", "-c", "local",
+                   str(playbook), "-e", f"@{variables}"]  # fmt: skip
+        if mode == "audit":
+            command.append("--check")
+        env = {
+            **os.environ,
+            "ANSIBLE_COLLECTIONS_PATH": str(ANSIBLE_COLLECTIONS),
+            "ANSIBLE_STDOUT_CALLBACK": "ansible.posix.json",
+            "ANSIBLE_PYTHON_INTERPRETER": "/usr/bin/python3",
+            "ANSIBLE_NOCOLOR": "1",
+            "ANSIBLE_RETRY_FILES_ENABLED": "False",
+        }
+        log.info("$ %s", " ".join(command))
+        proc = subprocess.run(  # noqa: S603
+            command, env=env, capture_output=True, text=True, check=False, cwd=playbook.parent
+        )
+    try:
+        report = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        tail = (proc.stdout + proc.stderr)[-2000:]
+        raise InstallError(
+            f"ansible-playbook gave no JSON report (rc={proc.returncode}): {tail}"
+        ) from exc
+    results = parse_ansible_results(report, mode)
+    counts = summarize(results)
+    log.info("ansible baseline %s: %s (rc=%d)", hardening["baseline"], counts, proc.returncode)
+    for result in results:
+        if result["status"] in ("failed", "non-compliant"):
+            log.info("rule %-12s %-13s %s", result["cis"], result["status"], result["title"])
+    if proc.returncode != 0 and not counts.get("failed"):
+        detail = "; ".join(failed_tasks(report)) or proc.stderr[-1500:]
+        raise InstallError(f"ansible-playbook failed (rc={proc.returncode}): {detail}")
     return results
 
 
@@ -209,7 +402,7 @@ def execute(plan: dict[str, Any]) -> dict[str, Any]:
             install_step(step, manager, Path(tmp))
             validate_step(step)
             results.append({"agent": step["agent"], "status": "ok"})
-    controls = apply_controls(plan.get("hardening"), "enforce")
+    controls = apply_hardening(plan.get("hardening"), "enforce")
     failed = [c["control"] for c in controls if c["status"] == "failed"]
     if failed:
         raise InstallError(f"hardening controls could not be remediated: {', '.join(failed)}")
@@ -269,7 +462,7 @@ def run_drift(force: bool = False) -> int:
             except InstallError as exc:
                 log.error("%s", exc)
                 findings.append({"item": f"agent:{step['agent']}", "status": "failed"})
-    for result in apply_controls(plan.get("hardening"), mode):
+    for result in apply_hardening(plan.get("hardening"), mode):
         if result["status"] != "compliant":
             findings.append({"item": f"control:{result['control']}", "status": result["status"]})
 

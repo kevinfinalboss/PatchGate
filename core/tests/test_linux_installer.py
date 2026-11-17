@@ -272,3 +272,149 @@ def test_drift_respects_interval_between_runs(installer: ModuleType, tmp_path: P
     setting.unlink()
     assert installer.main(["--drift"]) == 0  # 30m not elapsed: skipped
     assert not setting.exists()
+
+
+# ---------------------------------------------------------------- ansible engine
+
+
+def ansible_report(*tasks: tuple[str, dict[str, bool]]) -> dict[str, Any]:
+    return {
+        "plays": [
+            {
+                "tasks": [
+                    {"task": {"name": name}, "hosts": {"localhost": result}}
+                    for name, result in tasks
+                ]
+            }
+        ]
+    }
+
+
+def test_ansible_results_map_to_cis_rules(installer: ModuleType) -> None:
+    report = ansible_report(
+        ("Gathering Facts", {"changed": False}),
+        ("1.1.1.1 | PATCH | Ensure cramfs is disabled", {"changed": True}),
+        ("1.1.1.1 | AUDIT | Ensure cramfs is disabled", {"changed": False}),
+        ("5.2.10 | PATCH | Ensure root login is disabled", {"changed": False}),
+        ("4.1.1 | PATCH | Ensure auditd", {"skipped": True}),
+        ("6.1.3 | PATCH | shadow perms", {"failed": True}),
+    )
+    results = installer.parse_ansible_results(report, "enforce")
+    assert [(r["cis"], r["status"]) for r in results] == [
+        ("1.1.1.1", "remediated"),  # worst status of the rule's tasks wins
+        ("5.2.10", "compliant"),
+        ("6.1.3", "failed"),
+    ]
+    audit = installer.parse_ansible_results(report, "audit")
+    assert audit[0]["status"] == "non-compliant"
+
+
+def make_tar(path: Path, members: dict[str, bytes], links: dict[str, str] | None = None) -> Path:
+    import io as _io
+    import tarfile
+
+    with tarfile.open(path, "w:gz") as tar:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, _io.BytesIO(data))
+        for name, target in (links or {}).items():
+            info = tarfile.TarInfo(name)
+            info.type = tarfile.SYMTYPE
+            info.linkname = target
+            tar.addfile(info)
+    return path
+
+
+@pytest.mark.parametrize(
+    ("members", "links"),
+    [
+        ({"../evil": b"x"}, None),
+        ({"/etc/evil": b"x"}, None),
+        ({"ok/file": b"x"}, {"ok/link": "../../etc/passwd"}),
+    ],
+)
+def test_safe_extract_rejects_escapes(
+    installer: ModuleType,
+    tmp_path: Path,
+    members: dict[str, bytes],
+    links: dict[str, str] | None,
+) -> None:
+    archive = make_tar(tmp_path / "a.tar.gz", members, links)
+    dest = tmp_path / "out"
+    dest.mkdir()
+    with pytest.raises(installer.InstallError):
+        installer.safe_extract(archive, dest)
+
+
+def test_ansible_engine_end_to_end_with_fake_playbook(
+    installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    report = ansible_report(
+        ("1.1.1.1 | PATCH | Ensure cramfs is disabled", {"changed": True}),
+        ("5.2.10 | PATCH | Ensure root login is disabled", {"changed": False}),
+    )
+    fake = bin_dir / "ansible-playbook"
+    fake.write_text(
+        f"#!/bin/sh\necho \"$@\" > {tmp_path}/args\ncat <<'JSON'\n{json.dumps(report)}\nJSON\n"
+    )
+    fake.chmod(0o755)
+    playbook = tmp_path / "role" / "site.yml"
+    playbook.parent.mkdir()
+    playbook.write_text("---\n")
+    monkeypatch.setattr(installer, "ensure_ansible_runtime", lambda: bin_dir)
+    monkeypatch.setattr(installer, "ensure_baseline", lambda h, b, w: playbook)
+
+    doc = plan()
+    doc["hardening"] = {
+        "engine": "ansible",
+        "baseline": "demo",
+        "source": "https://example.com/role.tar.gz",
+        "sha256": "a" * 64,
+        "playbook": "site.yml",
+        "variables": {"level_2": False},
+    }
+    assert installer.main(["--plan-b64", b64(doc)]) == 0
+    evidence = json.loads((state_dir(tmp_path) / "compliance.json").read_text())
+    assert evidence["engine"] == "ansible"
+    assert [c["status"] for c in evidence["controls"]] == ["remediated", "compliant"]
+    assert "--check" not in (tmp_path / "args").read_text()
+
+
+def test_ensure_baseline_verifies_and_installs_collections(
+    installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    role = make_tar(tmp_path / "role.tar.gz", {"ROLE-1.0/site.yml": b"---\n"})
+    downloads: list[str] = []
+
+    def fake_download(url: str, sha: str, dest: Path) -> Path:
+        downloads.append(url)
+        dest.write_bytes(role.read_bytes())
+        return dest
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr(installer, "download", fake_download)
+    monkeypatch.setattr(installer, "run", lambda cmd, **kw: commands.append(cmd))
+    monkeypatch.setattr(installer, "BASELINES_DIR", tmp_path / "baselines")
+    hardening = {
+        "baseline": "demo",
+        "source": "https://example.com/role.tar.gz",
+        "sha256": "b" * 64,
+        "playbook": "site.yml",
+        "collections": [
+            {"name": "a.b", "version": "1.0.0", "source": "https://x/a.tgz", "sha256": "c" * 64}
+        ],
+    }
+    work = tmp_path / "work"
+    work.mkdir()
+    playbook = installer.ensure_baseline(hardening, tmp_path / "bin", work)
+    assert playbook.name == "site.yml" and playbook.exists()
+    assert downloads == ["https://example.com/role.tar.gz", "https://x/a.tgz"]
+    assert "--no-deps" in commands[0] and "--offline" in commands[0]
+
+    # Second call is a no-op: content is cached per baseline digest.
+    downloads.clear()
+    installer.ensure_baseline(hardening, tmp_path / "bin", work)
+    assert downloads == []

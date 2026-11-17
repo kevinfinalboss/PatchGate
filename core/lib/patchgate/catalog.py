@@ -29,7 +29,7 @@ MAX_ENCODED_PLAN_CHARS = 3_800
 
 Document = dict[str, Any]
 
-KINDS = ("Agent", "Profile", "Control")
+KINDS = ("Agent", "Profile", "Control", "Baseline")
 # Hardening levels are cumulative: a profile at level N gets every control with level <= N.
 LEVELS = {"baseline": 0, "cis-level1": 1}
 DEFAULT_DRIFT = {"interval": "30m", "mode": "enforce"}
@@ -80,6 +80,7 @@ class Catalog:
     agents: dict[str, Document] = field(default_factory=dict)
     profiles: dict[str, Document] = field(default_factory=dict)
     controls: dict[str, Document] = field(default_factory=dict)
+    baselines: dict[str, Document] = field(default_factory=dict)
 
     @classmethod
     def load(cls, root: Path) -> Catalog:
@@ -104,6 +105,7 @@ class Catalog:
                 "Agent": catalog.agents,
                 "Profile": catalog.profiles,
                 "Control": catalog.controls,
+                "Baseline": catalog.baselines,
             }[doc["kind"]]
             if name in bucket:
                 errors.append(f"{source}: duplicate {doc['kind']} '{name}'")
@@ -128,6 +130,20 @@ class Catalog:
                     )
             if platform != "windows" and spec.get("chocolatey"):
                 errors.append(f"profile '{name}': chocolatey is only supported on windows")
+            baseline_name = spec.get("hardening", {}).get("baseline")
+            if baseline_name:
+                baseline = self.baselines.get(baseline_name)
+                if baseline is None:
+                    errors.append(f"profile '{name}': unknown baseline '{baseline_name}'")
+                elif baseline["spec"]["platform"] != platform:
+                    errors.append(
+                        f"profile '{name}': baseline '{baseline_name}' is not for {platform}"
+                    )
+                elif baseline["spec"]["engine"] != spec["hardening"]["engine"]:
+                    errors.append(
+                        f"profile '{name}': baseline '{baseline_name}' needs engine "
+                        f"'{baseline['spec']['engine']}'"
+                    )
             for control_name in spec.get("hardening", {}).get("exclude", []):
                 control = self.controls.get(control_name)
                 if control is None:
@@ -171,6 +187,13 @@ class Catalog:
         hardening = spec.get("hardening")
         if not hardening:
             return None
+        if hardening["engine"] == "ansible":
+            baseline = self.baselines[hardening["baseline"]]
+            return {
+                "engine": "ansible",
+                "baseline": baseline["metadata"]["name"],
+                **baseline["spec"],
+            }
         level = hardening.get("level", "baseline")
         excluded = set(hardening.get("exclude", []))
         controls = [

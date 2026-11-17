@@ -29,3 +29,21 @@ Cloud-agnostic part of Patchgate. Root rules in [/AGENTS.md](../AGENTS.md) still
 - Every document has `apiVersion: patchgate.io/v1alpha1`, `kind`, `metadata.name`, `spec`.
 - Secrets are referenced as `{{secret:<name>}}`, never inlined.
 - Install methods: `choco`, `msi`, `exe`, `package` (apt/dnf auto-detected), `script`. Adding a method touches the schema, both installers and docs.
+
+## Ansible runtime lock
+
+`scripts/linux/ansible-requirements.txt` pins the Ansible runtime used by the `ansible` hardening engine
+(Python 3.12 venv, `pip --require-hashes --only-binary :all: --no-deps`). To upgrade:
+
+1. In an `amazonlinux:2023` container with `python3.12`, run `pip-compile --generate-hashes` for
+   `ansible-core==<version>` (check `requires_ansible` of every collection used by the baselines).
+2. Keep only hashes of `py3-none-any` and `manylinux` x86_64/aarch64 wheels for CPython 3.12/abi3
+   (query `https://pypi.org/pypi/<pkg>/<version>/json` to map hashes to file names).
+3. Run `make spoke-artifacts` and test a baseline in the lab.
+
+## Baselines (third-party hardening content)
+
+- Pin the archive and **every** collection (including transitive ones) with `sha256`: collections are
+  installed with `--no-deps --offline`, so a missing dependency fails loudly instead of downloading.
+- Disable rules only through `spec.variables`, each with a comment explaining the exception.
+- Container tests validate the mechanics only (no systemd); always verify a baseline on a real instance.

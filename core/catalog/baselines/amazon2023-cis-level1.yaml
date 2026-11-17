@@ -1,0 +1,39 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Baseline
+metadata:
+  name: amazon2023-cis-level1
+  description: CIS Amazon Linux 2023 Level 1 via ansible-lockdown (full benchmark coverage).
+  references:
+    benchmark: CIS Amazon Linux 2023 Benchmark v1.0.0
+    upstream: https://github.com/ansible-lockdown/AMAZON2023-CIS
+spec:
+  engine: ansible
+  platform: linux
+  source: https://github.com/ansible-lockdown/AMAZON2023-CIS/archive/refs/tags/1.5.0.tar.gz
+  sha256: 7e5bda3aca0c55fea478ed29ffd5a05bd1222458c90732afc400233d9d3e8b39
+  playbook: site.yml
+  # Collections are installed offline with --no-deps: every dependency is listed and pinned here.
+  collections:
+    - name: community.general
+      version: 14.0.1
+      source: https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-14.0.1.tar.gz
+      sha256: 816291784a3369a888119a6a5d00593beec44d919605ac6553b0a54274470beb
+    - name: community.crypto
+      version: 3.5.1
+      source: https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-crypto-3.5.1.tar.gz
+      sha256: 90ab666a027b47c7cb2f46b6a1e1725798e7cf6baa47b1a765e5a3c754799355
+    - name: community.library_inventory_filtering_v1
+      version: 1.1.5
+      source: https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-library_inventory_filtering_v1-1.1.5.tar.gz
+      sha256: cbb9e86c5b1720df21e940cedcd2f3e1226c38262623e090a883712610733851
+    - name: ansible.posix
+      version: 2.2.2
+      source: https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/ansible-posix-2.2.2.tar.gz
+      sha256: 00a58c5d804c9adc99c3c3dc1b9f2246f4bb5f7337941440e0956f0e31c3b82b
+  variables:
+    amzn2023cis_level_1: true
+    amzn2023cis_level_2: false
+    setup_audit: false
+    run_audit: false
+    # Documented exceptions for cloud instances (access is via SSM/keys, root stays locked):
+    amzn2023cis_rule_4_6_6: false  # "root password is set" - a root password weakens key-only access

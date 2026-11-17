@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://patchgate.io/schemas/v1alpha1/baseline.schema.json",
+  "title": "Patchgate Baseline",
+  "description": "Third-party hardening content run by an engine other than 'controls' (ADR 0007). Every artifact is pinned by sha256.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "patchgate.io/v1alpha1" },
+    "kind": { "const": "Baseline" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "description"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "references": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "benchmark": { "type": "string", "maxLength": 100 },
+            "upstream": { "type": "string", "pattern": "^https://" }
+          }
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "platform", "source", "sha256", "playbook"],
+      "properties": {
+        "engine": { "const": "ansible" },
+        "platform": { "const": "linux" },
+        "source": { "$ref": "#/$defs/httpsUrl", "description": "Role/playbook archive (.tar.gz); the top-level folder is stripped." },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "playbook": { "type": "string", "pattern": "^[A-Za-z0-9_./-]+\\.ya?ml$" },
+        "collections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "version", "source", "sha256"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z0-9_]+\\.[a-z0-9_]+$" },
+              "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+              "source": { "$ref": "#/$defs/httpsUrl" },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
+        "variables": {
+          "type": "object",
+          "description": "Passed to the playbook as extra vars (use it to disable rules or set the level).",
+          "propertyNames": { "pattern": "^[a-z_][a-z0-9_]{0,99}$" },
+          "additionalProperties": { "type": ["string", "number", "boolean"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "httpsUrl": { "type": "string", "pattern": "^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~%/+-]*)?$" }
+  }
+}

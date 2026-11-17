@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "validate":
             print(
                 f"catalog OK: {len(catalog.agents)} agents, {len(catalog.controls)} controls, "
-                f"{len(catalog.profiles)} profiles"
+                f"{len(catalog.baselines)} baselines, {len(catalog.profiles)} profiles"
             )
         elif args.command == "compile":
             print(json.dumps(catalog.compile(args.profile), indent=2))

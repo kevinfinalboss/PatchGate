@@ -88,9 +88,10 @@
           "properties": {
             "engine": {
               "enum": [
-                "controls"
+                "controls",
+                "ansible"
               ],
-              "description": "Hardening engine. 'ansible' and 'dsc' arrive in Phases 3b/3c."
+              "description": "controls = native engine; ansible = a Baseline from catalog/baselines. 'dsc' arrives in Phase 3c."
             },
             "level": {
               "enum": [
@@ -107,8 +108,59 @@
                 "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
               },
               "description": "Control names to skip (documented exceptions)."
+            },
+            "baseline": {
+              "type": "string",
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+              "description": "Baseline name (required for engine=ansible)."
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "engine": {
+                    "const": "ansible"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "baseline"
+                ],
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "level"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "exclude"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "engine": {
+                    "const": "controls"
+                  }
+                }
+              },
+              "then": {
+                "not": {
+                  "required": [
+                    "baseline"
+                  ]
+                }
+              }
+            }
+          ]
         },
         "ring": {
           "type": "integer",
