@@ -39,4 +39,5 @@ spec:
       Unauthorized access is prohibited and may be prosecuted.
   # Documented exceptions (CIS rule IDs):
   exclude:
+    - "2.3.1.1" # Disable Administrator: the only local admin on EC2; Windows refuses and it would lock out access
     - "2.3.1.5" # Rename Administrator: EC2Launch password retrieval and AWS tooling expect "Administrator"

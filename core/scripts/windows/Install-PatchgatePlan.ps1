@@ -312,7 +312,8 @@ function Invoke-DscEngine {
         $script:HardeningRebootRequired = $true
     }
     $results = @($outcome.results)
-    Write-PatchgateLog ("dsc baseline {0}: {1}" -f $Hardening.baseline, ((Get-Summary $results).GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' ')
+    $summary = ((Get-Summary $results).GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' '
+    Write-PatchgateLog "dsc baseline $($Hardening.baseline): $summary ($($results.Count) rules)"
     foreach ($r in $results) {
         if ($r.status -in 'failed', 'non-compliant') { Write-PatchgateLog ("rule {0,-10} {1,-13} {2}" -f $r.cis, $r.status, $r.title) }
     }
