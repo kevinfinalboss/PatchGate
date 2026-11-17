@@ -45,7 +45,8 @@ ANSIBLE_COLLECTIONS = PATCHGATE_HOME / "ansible-collections"
 BASELINES_DIR = PATCHGATE_HOME / "baselines"
 ANSIBLE_LOCK = Path(__file__).resolve().with_name("ansible-requirements.txt")
 ANSIBLE_PYTHONS = ("python3.12", "python3.13", "python3.14", "python3")
-CIS_ID = re.compile(r"^\s*(\d+(?:\.\d+)+)\b")
+# Task names look like "<role path> : 1.1.1.1 | PATCH | Ensure ..." in the JSON report.
+CIS_ID = re.compile(r"(?:^|:\s+)\"?(\d+(?:\.\d+)+)\s*\|")
 STATUS_RANK = {"compliant": 0, "remediated": 1, "non-compliant": 2, "failed": 3}
 DOWNLOAD_TIMEOUT = 300
 VALIDATE_ATTEMPTS = 5
@@ -314,7 +315,7 @@ def parse_ansible_results(report: dict[str, Any], mode: str) -> list[dict[str, s
     for play in report.get("plays", []):
         for task in play.get("tasks", []):
             name = str(task.get("task", {}).get("name", ""))
-            match = CIS_ID.match(name)
+            match = CIS_ID.search(name)
             if not match:
                 continue
             for host in task.get("hosts", {}).values():

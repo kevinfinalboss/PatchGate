@@ -418,3 +418,18 @@ def test_ensure_baseline_verifies_and_installs_collections(
     downloads.clear()
     installer.ensure_baseline(hardening, tmp_path / "bin", work)
     assert downloads == []
+
+
+def test_ansible_results_accept_role_prefixed_task_names(installer: ModuleType) -> None:
+    """The json callback prefixes task names with the role path (seen on a real instance)."""
+    role = "/opt/patchgate/baselines/amazon2023-cis-level1-7e5bda3aca0c"
+    report = ansible_report(
+        (f"{role} : 1.1.1.1 | PATCH | Ensure squashfs is disabled | blacklist", {"changed": True}),
+        (f'{role} : "5.3 | PATCH | Ensure logrotate is configured"', {"changed": False}),
+        (f"{role} : PRELIM | AUDIT | Gather facts 1.2.3", {"changed": False}),
+    )
+    results = installer.parse_ansible_results(report, "enforce")
+    assert [(r["cis"], r["status"]) for r in results] == [
+        ("1.1.1.1", "remediated"),
+        ("5.3", "compliant"),
+    ]
