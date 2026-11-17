@@ -26,10 +26,10 @@ locals {
   partition  = data.aws_partition.current.partition
   repo_root  = "${path.module}/../../../../.."
 
-  # Patchgate-Execution in each registered spoke account (explicit list = least privilege).
-  execution_role_arns = [
-    for id in var.spoke_account_ids : "arn:${local.partition}:iam::${id}:role/${var.execution_role_name}"
-  ]
+  # Patchgate-Execution in any account of the organization, so accounts onboarded by the
+  # StackSet work without changing the hub. aws:ResourceOrgID keeps it inside the org, and
+  # each spoke's trust policy only accepts these exact hub roles.
+  execution_role_arn_pattern = "arn:${local.partition}:iam::*:role/${var.execution_role_name}"
 }
 
 # ------------------------------------------------------------------ event bus
@@ -157,9 +157,14 @@ resource "aws_iam_role" "resolver" {
 
 data "aws_iam_policy_document" "resolver" {
   statement {
-    sid       = "AssumeExecutionRoleInSpokes"
+    sid       = "AssumeExecutionRoleInOrganization"
     actions   = ["sts:AssumeRole"]
-    resources = local.execution_role_arns
+    resources = [local.execution_role_arn_pattern]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceOrgID"
+      values   = [var.organization_id]
+    }
   }
   statement {
     sid       = "Logs"
@@ -221,9 +226,14 @@ data "aws_iam_policy_document" "orchestrator" {
     resources = [aws_lambda_function.resolver.arn]
   }
   statement {
-    sid       = "AssumeExecutionRoleInSpokes"
+    sid       = "AssumeExecutionRoleInOrganization"
     actions   = ["sts:AssumeRole"]
-    resources = local.execution_role_arns
+    resources = [local.execution_role_arn_pattern]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceOrgID"
+      values   = [var.organization_id]
+    }
   }
   statement {
     sid       = "Notify"

@@ -2,10 +2,6 @@ variable "organization_id" {
   type = string
 }
 
-variable "spoke_account_ids" {
-  type = list(string)
-}
-
 variable "notification_email" {
   type    = string
   default = null
@@ -14,7 +10,6 @@ variable "notification_email" {
 module "hub" {
   source             = "../../modules/hub"
   organization_id    = var.organization_id
-  spoke_account_ids  = var.spoke_account_ids
   notification_email = var.notification_email
 }
 

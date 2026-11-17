@@ -147,75 +147,15 @@ resource "aws_cloudwatch_event_target" "hub" {
 
 # ------------------------------------------------------------------ SSM documents
 
-locals {
-  plan_parameter = {
-    Plan = {
-      type           = "String"
-      description    = "Install plan produced by the Patchgate catalog (gz1:<base64>)."
-      allowedPattern = "^(gz1:)?[A-Za-z0-9+/=]+$"
-      maxChars       = 4000
-    }
-  }
-
-  linux_installer   = file("${local.repo_root}/core/scripts/linux/patchgate_install.py")
-  windows_installer = file("${local.repo_root}/core/scripts/windows/Install-PatchgatePlan.ps1")
-}
-
 resource "aws_ssm_document" "bootstrap" {
-  for_each = {
-    linux = {
-      name = "Patchgate-Bootstrap-Linux"
-      content = jsonencode({
-        schemaVersion = "2.2"
-        description   = "Patchgate bootstrap for Linux: applies an install plan with the core installer."
-        parameters    = local.plan_parameter
-        mainSteps = [{
-          action       = "aws:runShellScript"
-          name         = "applyPlan"
-          precondition = { StringEquals = ["platformType", "Linux"] }
-          inputs = {
-            timeoutSeconds = "1800"
-            runCommand = [
-              "set -euo pipefail",
-              "install -d -m 0700 /opt/patchgate",
-              "cat > /opt/patchgate/patchgate_install.py <<'PATCHGATE_EOF'\n${local.linux_installer}\nPATCHGATE_EOF",
-              "python3 /opt/patchgate/patchgate_install.py --plan-b64 '{{ Plan }}'",
-            ]
-          }
-        }]
-      })
-    }
-    windows = {
-      name = "Patchgate-Bootstrap-Windows"
-      content = jsonencode({
-        schemaVersion = "2.2"
-        description   = "Patchgate bootstrap for Windows: applies an install plan with the core installer."
-        parameters    = local.plan_parameter
-        mainSteps = [{
-          action       = "aws:runPowerShellScript"
-          name         = "applyPlan"
-          precondition = { StringEquals = ["platformType", "Windows"] }
-          inputs = {
-            timeoutSeconds = "1800"
-            runCommand = [
-              "$ErrorActionPreference = 'Stop'",
-              "$dir = Join-Path $env:ProgramData 'Patchgate\\bin'",
-              "New-Item -ItemType Directory -Force -Path $dir | Out-Null",
-              "$installer = @'\n${local.windows_installer}\n'@",
-              "Set-Content -Path (Join-Path $dir 'Install-PatchgatePlan.ps1') -Value $installer -Encoding UTF8",
-              "& (Join-Path $dir 'Install-PatchgatePlan.ps1') -PlanBase64 '{{ Plan }}'",
-              "exit $LASTEXITCODE",
-            ]
-          }
-        }]
-      })
-    }
-  }
+  # Content is generated from core/ by providers/aws/stacksets/generate.py and shared with
+  # the StackSet template, so single-account and multi-account deployments stay identical.
+  for_each = toset(["Patchgate-Bootstrap-Linux", "Patchgate-Bootstrap-Windows"])
 
-  name            = each.value.name
+  name            = each.value
   document_type   = "Command"
   document_format = "JSON"
-  content         = each.value.content
+  content         = file("${local.repo_root}/providers/aws/ssm/${each.value}.json")
 }
 
 # ------------------------------------------------------------------ instance profile & logs

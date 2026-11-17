@@ -69,12 +69,20 @@ boundaries: ## Ensure core/ never imports cloud SDKs
 plans: ## Compile the catalog into the resolver Lambda bundle (commit the result)
 	$(PY) -m patchgate compile-all --encoded --out providers/aws/functions/resolver/plans.json
 
+.PHONY: spoke-artifacts
+spoke-artifacts: ## Regenerate SSM documents and the StackSet template from core/ (commit the result)
+	$(PY) providers/aws/stacksets/generate.py
+
 .PHONY: validate-catalog
 validate-catalog: ## Validate catalog documents against the JSON Schemas
 	$(PY) -m patchgate validate
 
+.PHONY: generated
+generated: ## Fail if generated artifacts (plans.json, SSM docs, StackSet) are stale
+	$(PY) providers/aws/stacksets/generate.py --check
+
 .PHONY: check
-check: lint typecheck boundaries validate-catalog test validate security ## Run every check (same as CI)
+check: lint typecheck boundaries validate-catalog generated test validate security ## Run every check (same as CI)
 
 # ------------------------------------------------------------------ AWS deployment
 # Applies always show a plan and ask for confirmation (no -auto-approve).

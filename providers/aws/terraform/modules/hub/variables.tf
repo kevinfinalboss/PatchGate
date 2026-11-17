@@ -8,16 +8,6 @@ variable "organization_id" {
   }
 }
 
-variable "spoke_account_ids" {
-  description = "Accounts with the spoke installed; the hub may assume Patchgate-Execution only there."
-  type        = list(string)
-
-  validation {
-    condition     = alltrue([for id in var.spoke_account_ids : can(regex("^\\d{12}$", id))])
-    error_message = "spoke_account_ids must be 12-digit AWS account IDs."
-  }
-}
-
 variable "execution_role_name" {
   description = "Name of the role the hub assumes in spoke accounts."
   type        = string

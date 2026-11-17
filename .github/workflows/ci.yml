@@ -33,6 +33,8 @@ jobs:
         run: "! grep -rnE '^\\s*(import|from)\\s+(boto3|botocore|azure)' core --include='*.py'"
       - name: Validate catalog
         run: python -m patchgate validate
+      - name: Generated artifacts are up to date
+        run: python providers/aws/stacksets/generate.py --check
       - run: pytest
 
   powershell:

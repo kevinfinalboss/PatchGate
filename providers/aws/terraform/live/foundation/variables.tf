@@ -40,3 +40,19 @@ variable "cloudtrail_retention_days" {
   type        = number
   default     = 90
 }
+
+variable "workload_region" {
+  description = "Region where spokes (and the hub) run."
+  type        = string
+  default     = "us-east-2"
+}
+
+variable "hub_account_id" {
+  description = "Account ID of the Patchgate hub."
+  type        = string
+}
+
+variable "hub_event_bus_arn" {
+  description = "ARN of the hub's central event bus (output of live/hub)."
+  type        = string
+}

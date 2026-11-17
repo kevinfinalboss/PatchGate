@@ -7,5 +7,5 @@ output "instance_profile_name" {
 }
 
 output "document_names" {
-  value = { for k, d in aws_ssm_document.bootstrap : k => d.name }
+  value = [for d in aws_ssm_document.bootstrap : d.name]
 }
