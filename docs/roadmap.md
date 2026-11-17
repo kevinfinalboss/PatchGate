@@ -2,36 +2,41 @@
 
 Each phase ends with: working code, updated docs, an ADR for its main decision and a short demo (GIF or video).
 
-## Phase 0 — Foundation ⏳
+## Phase 0 — Foundation ✅
 
 - [x] AWS Organization with Management, Hub and two Workload accounts (dev, prod); OUs `Security` and `Workloads`
 - [x] AWS Budget (US$15) with actual and forecast alerts in the management account
 - [x] Budget Action: above US$25, attach an SCP that denies `ec2:RunInstances` in workload accounts
 - [x] SCPs: deny leaving the organization and region restriction (pre-existing from the AWS organization setup; workload region is `us-east-2`)
-- [ ] Ephemeral lab tooling: `make up`, `make down`, `make janitor` (removes orphaned snapshots, AMIs, volumes, IPs and log groups tagged by Patchgate)
-- [ ] TTL reaper: scheduled Lambda that terminates lab instances older than their `Patchgate:TTL` (default 2h)
-- [ ] Repository tooling: `Makefile`, `ruff`, `mypy`, `pytest`, `tflint`, `checkov`, `shellcheck`, `PSScriptAnalyzer`, pre-commit
-- [ ] GitHub Actions CI (lint, test, IaC scan) and OIDC role for `terraform plan`
+- [x] Ephemeral lab tooling: `make up`, `make down`, `make janitor` (removes orphaned snapshots, AMIs, volumes, IPs and log groups tagged by Patchgate)
+- [x] TTL reaper: scheduled Lambda that terminates lab instances older than their `Patchgate:TTL` (default 2h)
+- [x] Repository tooling: `Makefile`, `ruff`, `mypy`, `pytest`, `tflint`, `checkov`, `shellcheck`, `PSScriptAnalyzer`, pre-commit
+- [x] GitHub Actions CI (lint, test, IaC scan)
+- [ ] OIDC role for `terraform plan` in CI
 - [x] Terraform remote state (S3 with native locking)
 - [x] Organization CloudTrail (90-day retention)
 - [x] Documentation skeleton, ADRs 0001–0005, community files
 
 ## Phase 1 — Multi-account onboarding
 
-- [ ] Hub module: central event bus and bus policy restricted to the organization
+- [x] Hub module: central event bus and bus policy restricted to the organization
 - [ ] Spoke resources as Terraform module **and** StackSet (auto-deploy to Workloads OU)
-- [ ] `Patchgate-Execution` role and EventBridge forwarder
+- [x] `Patchgate-Execution` role and EventBridge forwarder
 - [ ] Single-account mode example
 - [ ] Demo: create a new account in the OU → it is onboarded automatically
 
-## Phase 2 — Bootstrap and agent catalog
+## Phase 2 — Bootstrap and agent catalog ✅
 
-- [ ] JSON Schemas for agent, profile and patch policy (`v1alpha1`) + `validate-catalog` in CI
-- [ ] Generic installers (Linux bash, Windows PowerShell) with checksum verification
-- [ ] Chocolatey support (install, pin versions, custom source)
-- [ ] Agent templates: CloudWatch Agent, ClamAV, Microsoft Defender, Wazuh, generic commercial EDR
-- [ ] Bootstrap workflow (Step Functions + resolve Lambda + SSM)
-- [ ] Demo: launch an instance with `Patchgate:Profile` → agents installed and tagged within minutes
+- [x] JSON Schemas for agent and profile (`v1alpha1`) + `validate-catalog` in CI
+- [ ] JSON Schema for patch policy (Phase 4)
+- [x] Generic installers (Linux bash, Windows PowerShell) with checksum verification
+- [x] Chocolatey support (pinned bootstrap package, package versions)
+- [ ] Chocolatey custom/internal source
+- [x] Agent templates: CloudWatch Agent, ClamAV, Microsoft Defender
+- [ ] Agent templates: Wazuh, generic commercial EDR
+- [x] Bootstrap workflow (Step Functions + resolve Lambda + SSM)
+- [x] Verified in the lab: Linux (`base-linux`) in ~1.5 min and Windows (`web-windows`) end to end, across accounts
+- [ ] Demo recording (GIF)
 
 ## Phase 3 — Hardening and drift
 
