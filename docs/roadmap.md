@@ -48,9 +48,12 @@ Each phase ends with: working code, updated docs, an ADR for its main decision a
 - [x] Drift findings published as `io.patchgate` events → hub → email
 - [x] Verified in the lab: hardened-linux (17 controls) and hardened-windows (15) applied on bootstrap; manual drift (SSH root login via a conflicting drop-in, ICMP redirects, disabled ClamAV timer, LLMNR, firewall) corrected by the drift association and emailed from the hub
 
-### 3b — Ansible engine (Linux)
-- [ ] `engine: ansible` with pinned ansible-lockdown roles; results mapped to the same evidence format
-- [ ] Spoke template delivered via S3 (inline CloudFormation limit)
+### 3b — Ansible engine (Linux) ✅
+- [x] `Baseline` catalog kind; `engine: ansible` with ansible-lockdown AMAZON2023-CIS 1.5.0 (CIS L1)
+- [x] Fully pinned supply chain: role and all collections by sha256 (offline, `--no-deps`), ansible-core via `pip --require-hashes`
+- [x] Results mapped to per-CIS-rule evidence (same format as the controls engine)
+- [x] Spoke template delivered from a versioned S3 artifacts bucket
+- [x] Verified in the lab: full CIS L1 applied at bootstrap in ~5.5 min; re-run reports 198/198 rules compliant (idempotent); SSM access preserved
 
 ### 3c — DSC engine (Windows)
 - [ ] `engine: dsc` with baseline configurations; same evidence format

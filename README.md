@@ -30,7 +30,7 @@ Patchgate is built with a **cloud-agnostic core** and **pluggable providers**. A
 |---|---|---|
 | 🧩 | **Declarative agent catalog** — declare what to install and how (Chocolatey, MSI, packages, scripts), with checksum verification | ✅ Done |
 | 🚀 | **Automatic bootstrap** — a new instance receives its agents and configuration, driven only by tags | ✅ Done (Linux & Windows) |
-| 🛡️ | **CIS hardening with drift correction** — manual changes are reverted to the baseline | ✅ Done (native engine; Ansible/DSC engines next) |
+| 🛡️ | **CIS hardening with drift correction** — manual changes are reverted to the baseline | ✅ Done (native controls engine + full CIS via Ansible; DSC next) |
 | 🔁 | **Ring-based patching with approval gates** — snapshot before, health check after, automatic rollback | Planned (Phase 4) |
 | 🖼️ | **Golden images** — hardened, pre-patched images gated by a vulnerability scan | Planned (Phase 5) |
 | 🚨 | **CVE-driven emergency patching** — a critical finding triggers an accelerated flow | Planned (Phase 6) |
