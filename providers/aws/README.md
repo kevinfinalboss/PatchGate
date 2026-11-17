@@ -29,3 +29,19 @@ AWS implementation of the [provider contract](../README.md).
 Region: `us-east-2` for all hub and spoke resources. Management-account foundation resources stay in `us-east-1`.
 
 See [AGENTS.md](AGENTS.md) for layout and rules, and [docs/architecture.md](../../docs/architecture.md) for the design.
+
+## Using Patchgate with your own Terraform
+
+Patchgate records results as `Patchgate:Bootstrap*` tags on your instances. If you manage instances with Terraform, ignore those keys or the next `apply` will remove them:
+
+```hcl
+lifecycle {
+  ignore_changes = [
+    tags["Patchgate:BootstrapStatus"],
+    tags["Patchgate:BootstrapDigest"],
+    tags["Patchgate:BootstrapExecution"],
+  ]
+}
+```
+
+To opt an instance in, set `Patchgate:Managed = "true"` and optionally `Patchgate:Profile` (defaults: `base-linux` / `base-windows`), and use the `Patchgate-Instance` instance profile.

@@ -148,7 +148,16 @@ resource "aws_instance" "lab" {
   volume_tags = merge(local.lab_tags, { Name = "patchgate-lab-${each.key}" })
 
   lifecycle {
-    ignore_changes = [ami]
+    # Tags written by Patchgate at runtime must survive later applies.
+    ignore_changes = [
+      ami,
+      tags["Patchgate:BootstrapStatus"],
+      tags["Patchgate:BootstrapDigest"],
+      tags["Patchgate:BootstrapExecution"],
+      tags_all["Patchgate:BootstrapStatus"],
+      tags_all["Patchgate:BootstrapDigest"],
+      tags_all["Patchgate:BootstrapExecution"],
+    ]
   }
 }
 
