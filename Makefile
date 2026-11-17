@@ -5,7 +5,9 @@ VENV        ?= .venv
 PY          := $(VENV)/bin/python
 TF_DIRS     := $(shell find providers -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; | sort -u)
 PY_PATHS    := core/lib core/tests core/scripts/linux providers/aws/functions
-SH_SCRIPTS  := $(shell find core/scripts -name '*.sh' 2>/dev/null)
+SH_SCRIPTS  := $(shell find core/scripts providers/aws/scripts -name '*.sh' 2>/dev/null)
+LIVE        := providers/aws/terraform/live
+ACCOUNT     ?= dev
 
 .PHONY: help
 help: ## Show this help
@@ -56,9 +58,41 @@ boundaries: ## Ensure core/ never imports cloud SDKs
 	@echo "core/ boundary OK"
 
 
+.PHONY: plans
+plans: ## Compile the catalog into the resolver Lambda bundle (commit the result)
+	$(PY) -m patchgate compile-all --encoded --out providers/aws/functions/resolver/plans.json
+
 .PHONY: validate-catalog
 validate-catalog: ## Validate catalog documents against the JSON Schemas
 	$(PY) -m patchgate validate
 
 .PHONY: check
 check: lint typecheck boundaries validate-catalog test validate security ## Run every check (same as CI)
+
+# ------------------------------------------------------------------ AWS deployment
+# Applies always show a plan and ask for confirmation (no -auto-approve).
+
+.PHONY: hub
+hub: ## Deploy the hub (control plane)
+	terraform -chdir=$(LIVE)/hub init -backend-config=backend.hcl -input=false >/dev/null
+	terraform -chdir=$(LIVE)/hub apply
+
+.PHONY: spoke
+spoke: ## Deploy the spoke into ACCOUNT (dev|prod): make spoke ACCOUNT=prod
+	terraform -chdir=$(LIVE)/spoke init -backend-config=backend.hcl -input=false >/dev/null
+	terraform -chdir=$(LIVE)/spoke workspace select -or-create $(ACCOUNT)
+	terraform -chdir=$(LIVE)/spoke apply -var-file=accounts/$(ACCOUNT).tfvars
+
+.PHONY: up
+up: ## Create the ephemeral lab (instances bootstrap automatically)
+	terraform -chdir=$(LIVE)/lab init -backend-config=backend.hcl -input=false >/dev/null
+	terraform -chdir=$(LIVE)/lab apply
+
+.PHONY: down
+down: ## Destroy the lab, then report leftovers
+	terraform -chdir=$(LIVE)/lab destroy
+	./providers/aws/scripts/janitor.sh
+
+.PHONY: janitor
+janitor: ## List lab leftovers (DELETE=1 removes them)
+	./providers/aws/scripts/janitor.sh $(if $(DELETE),--delete,)

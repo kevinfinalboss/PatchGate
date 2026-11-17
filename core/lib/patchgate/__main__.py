@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from patchgate.catalog import Catalog, CatalogError
+from patchgate.catalog import Catalog, CatalogError, encode_plan
 
 DEFAULT_CATALOG = Path(__file__).resolve().parents[2] / "catalog"
 
@@ -21,6 +21,11 @@ def main(argv: list[str] | None = None) -> int:
     compile_one.add_argument("profile")
     compile_all = sub.add_parser("compile-all", help="Write every plan to a JSON file")
     compile_all.add_argument("--out", type=Path, required=True)
+    compile_all.add_argument(
+        "--encoded",
+        action="store_true",
+        help="Write {profile: {platform, digest, plan}} with transport-encoded plans",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -31,7 +36,20 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(catalog.compile(args.profile), indent=2))
         else:
             args.out.parent.mkdir(parents=True, exist_ok=True)
-            args.out.write_text(json.dumps(catalog.compile_all(), indent=2, sort_keys=True))
+            plans = catalog.compile_all()
+            output: dict[str, object] = (
+                {
+                    name: {
+                        "platform": plan["platform"],
+                        "digest": plan["digest"],
+                        "plan": encode_plan(plan),
+                    }
+                    for name, plan in plans.items()
+                }
+                if args.encoded
+                else dict(plans)
+            )
+            args.out.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
             print(f"wrote {len(catalog.profiles)} plans to {args.out}")
     except CatalogError as exc:
         for error in exc.errors:

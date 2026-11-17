@@ -1,0 +1,4 @@
+# Per-account values: copy to accounts/<workspace>.tfvars and pass with -var-file.
+aws_profile       = "patchgate-dev"
+hub_account_id    = "333333333333"
+hub_event_bus_arn = "arn:aws:events:us-east-2:333333333333:event-bus/patchgate-hub"

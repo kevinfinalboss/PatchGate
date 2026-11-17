@@ -1,0 +1,170 @@
+{
+  "Comment": "Patchgate Day-1 bootstrap: resolve the instance, wait for SSM, apply its profile, record the result.",
+  "StartAt": "Init",
+  "States": {
+    "Init": {
+      "Type": "Pass",
+      "Parameters": {
+        "accountId.$": "$.account",
+        "region.$": "$.region",
+        "instanceId.$": "$.detail.instance-id",
+        "retry": { "count": 0 }
+      },
+      "Next": "Resolve"
+    },
+    "Resolve": {
+      "Type": "Task",
+      "Resource": "${resolver_arn}",
+      "Parameters": {
+        "accountId.$": "$.accountId",
+        "region.$": "$.region",
+        "instanceId.$": "$.instanceId"
+      },
+      "ResultPath": "$.ctx",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NotifyFailure" }],
+      "Next": "IsManaged"
+    },
+    "IsManaged": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.ctx.managed", "BooleanEquals": false, "Next": "NotManaged" },
+        { "Variable": "$.ctx.alreadyBootstrapped", "BooleanEquals": true, "Next": "AlreadyBootstrapped" }
+      ],
+      "Default": "IsSsmOnline"
+    },
+    "NotManaged": { "Type": "Succeed" },
+    "AlreadyBootstrapped": { "Type": "Succeed" },
+    "IsSsmOnline": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.ctx.ssmOnline", "BooleanEquals": true, "Next": "RunPlan" },
+        { "Variable": "$.retry.count", "NumericGreaterThanEquals": ${ssm_wait_attempts}, "Next": "SsmTimeout" }
+      ],
+      "Default": "WaitForSsm"
+    },
+    "WaitForSsm": { "Type": "Wait", "Seconds": 30, "Next": "CountRetry" },
+    "CountRetry": {
+      "Type": "Pass",
+      "Parameters": { "count.$": "States.MathAdd($.retry.count, 1)" },
+      "ResultPath": "$.retry",
+      "Next": "Resolve"
+    },
+    "SsmTimeout": {
+      "Type": "Pass",
+      "Result": { "Error": "SsmNotOnline", "Cause": "SSM agent did not come online in time" },
+      "ResultPath": "$.error",
+      "Next": "TagFailed"
+    },
+    "RunPlan": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:ssm:sendCommand",
+      "Credentials": { "RoleArn.$": "$.ctx.roleArn" },
+      "Parameters": {
+        "DocumentName.$": "$.ctx.documentName",
+        "InstanceIds.$": "States.Array($.instanceId)",
+        "Parameters.$": "$.ctx.documentParameters",
+        "Comment.$": "States.Format('Patchgate bootstrap ({})', $.ctx.profile)",
+        "TimeoutSeconds": 600,
+        "CloudWatchOutputConfig": { "CloudWatchOutputEnabled": true, "CloudWatchLogGroupName": "/patchgate/bootstrap" }
+      },
+      "ResultSelector": { "id.$": "$.Command.CommandId" },
+      "ResultPath": "$.command",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "TagFailed" }],
+      "Next": "WaitForCommand"
+    },
+    "WaitForCommand": { "Type": "Wait", "Seconds": 20, "Next": "GetCommandStatus" },
+    "GetCommandStatus": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:ssm:getCommandInvocation",
+      "Credentials": { "RoleArn.$": "$.ctx.roleArn" },
+      "Parameters": { "CommandId.$": "$.command.id", "InstanceId.$": "$.instanceId" },
+      "ResultSelector": { "status.$": "$.Status", "details.$": "$.StatusDetails" },
+      "ResultPath": "$.result",
+      "Retry": [{ "ErrorEquals": ["Ssm.InvocationDoesNotExistException"], "IntervalSeconds": 5, "MaxAttempts": 6, "BackoffRate": 1.5 }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "TagFailed" }],
+      "Next": "CheckCommandStatus"
+    },
+    "CheckCommandStatus": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.result.status", "StringEquals": "Success", "Next": "TagSuccess" },
+        {
+          "Or": [
+            { "Variable": "$.result.status", "StringEquals": "Pending" },
+            { "Variable": "$.result.status", "StringEquals": "InProgress" },
+            { "Variable": "$.result.status", "StringEquals": "Delayed" }
+          ],
+          "Next": "WaitForCommand"
+        }
+      ],
+      "Default": "CommandFailed"
+    },
+    "CommandFailed": {
+      "Type": "Pass",
+      "Parameters": { "Error": "CommandFailed", "Cause.$": "$.result.details" },
+      "ResultPath": "$.error",
+      "Next": "TagFailed"
+    },
+    "TagSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:ec2:createTags",
+      "Credentials": { "RoleArn.$": "$.ctx.roleArn" },
+      "Parameters": {
+        "Resources.$": "States.Array($.instanceId)",
+        "Tags": [
+          { "Key": "Patchgate:BootstrapStatus", "Value": "Success" },
+          { "Key": "Patchgate:BootstrapDigest", "Value.$": "$.ctx.digest" },
+          { "Key": "Patchgate:BootstrapExecution", "Value.$": "$$.Execution.Name" }
+        ]
+      },
+      "ResultPath": null,
+      "Next": "NotifySuccess"
+    },
+    "NotifySuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${topic_arn}",
+        "Subject": "[Patchgate] Bootstrap succeeded",
+        "Message.$": "States.Format('Instance {} in account {} was bootstrapped with profile {} ({}).', $.instanceId, $.accountId, $.ctx.profile, $.ctx.digest)"
+      },
+      "ResultPath": null,
+      "End": true
+    },
+    "TagFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:ec2:createTags",
+      "Credentials": { "RoleArn.$": "$.ctx.roleArn" },
+      "Parameters": {
+        "Resources.$": "States.Array($.instanceId)",
+        "Tags": [
+          { "Key": "Patchgate:BootstrapStatus", "Value": "Failed" },
+          { "Key": "Patchgate:BootstrapExecution", "Value.$": "$$.Execution.Name" }
+        ]
+      },
+      "ResultPath": null,
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": null, "Next": "NotifyFailure" }],
+      "Next": "NotifyFailure"
+    },
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${topic_arn}",
+        "Subject": "[Patchgate] Bootstrap FAILED",
+        "Message.$": "States.Format('Bootstrap failed for instance {} in account {}. Execution: {}. Error: {}', $.instanceId, $.accountId, $$.Execution.Name, States.JsonToString($.error))"
+      },
+      "ResultPath": null,
+      "Next": "Failed"
+    },
+    "Failed": { "Type": "Fail", "Error": "BootstrapFailed", "Cause": "See the NotifyFailure state input for details" }
+  }
+}

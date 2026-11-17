@@ -44,3 +44,6 @@ Thumbs.db
 # Terraform backend config (contains account-specific bucket names)
 backend.hcl
 *.egg-info/
+
+# Build artifacts of root modules
+**/.build/

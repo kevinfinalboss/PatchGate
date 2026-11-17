@@ -13,3 +13,14 @@ skip-check:
   - CKV2_AWS_62  # S3 event notifications: no consumer for bucket events
   - CKV_AWS_252  # CloudTrail SNS topic: no consumer for delivery notifications
   - CKV2_AWS_10  # CloudTrail to CloudWatch Logs: adds ingestion cost; S3 + Athena is used instead
+  - CKV2_AWS_11  # VPC flow logs: lab VPC has no inbound access; flow log storage adds cost
+  - CKV_AWS_88   # Public IP on lab instances: replaces a NAT Gateway (~US$33/month); no inbound rules
+  - CKV_AWS_126  # EC2 detailed monitoring: extra cost; CloudWatch agent ships metrics
+  - CKV_AWS_116  # Lambda DLQ: idempotent scheduled/workflow-invoked functions; failures surface in logs/Step Functions
+  - CKV_AWS_117  # Lambda in VPC: functions only call AWS APIs; a VPC would require NAT or endpoints
+  - CKV_AWS_115  # Lambda reserved concurrency: low-volume functions
+  - CKV_AWS_173  # Lambda env var KMS: no secrets in environment variables
+  - CKV_AWS_272  # Lambda code signing: code built and deployed by this repository's pipeline
+  - CKV_AWS_158  # CloudWatch log group CMK: SSE by default; avoids per-key cost
+  - CKV_AWS_338  # Log retention >= 1 year: lab logs kept 7-14 days to minimise cost
+  - CKV_AWS_50   # Lambda X-Ray tracing: not needed at lab scale

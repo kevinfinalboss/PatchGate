@@ -62,6 +62,8 @@ jobs:
             terraform -chdir="$d" init -backend=false -input=false >/dev/null
             terraform -chdir="$d" validate -no-color
           done
+      - name: shellcheck
+        run: find core/scripts providers/aws/scripts -name '*.sh' -print0 | xargs -0 -r shellcheck
       - uses: terraform-linters/setup-tflint@v4
       - run: tflint --init && tflint --recursive --minimum-failure-severity=warning
 

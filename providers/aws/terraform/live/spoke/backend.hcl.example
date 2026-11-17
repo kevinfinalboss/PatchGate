@@ -1,0 +1,7 @@
+# Copy to backend.hcl (git-ignored). State lives in the management account bucket.
+bucket       = "patchgate-tfstate-<management-account-id>"
+key          = "spoke/terraform.tfstate"
+region       = "us-east-1"
+profile      = "<management-profile>"
+encrypt      = true
+use_lockfile = true
