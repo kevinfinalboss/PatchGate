@@ -38,7 +38,7 @@ Each phase ends with: working code, updated docs, an ADR for its main decision a
 - [x] Verified in the lab: Linux (`base-linux`) in ~1.5 min and Windows (`web-windows`) end to end, across accounts
 - [ ] Demo recording (GIF)
 
-## Phase 3 — Hardening and drift
+## Phase 3 — Hardening and drift ✅
 
 ### 3a — Native controls engine ✅
 - [x] `Control` catalog kind; levels `baseline` / `cis-level1`; per-profile exclusions (ADR 0007)
@@ -55,10 +55,10 @@ Each phase ends with: working code, updated docs, an ADR for its main decision a
 - [x] Spoke template delivered from a versioned S3 artifacts bucket
 - [x] Verified in the lab: full CIS L1 applied at bootstrap in ~5.5 min; re-run reports 198/198 rules compliant (idempotent); SSM access preserved
 
-### 3c — DSC engine (Windows) ⏳
+### 3c — DSC engine (Windows) ✅
 - [x] `engine: dsc` baselines: CISDSC 4.0.1 (CIS Windows Server 2022 L1) with AuditPolicyDsc/SecurityPolicyDsc pinned by sha256
 - [x] Safe .nupkg extraction, LCM in ApplyOnly (Patchgate drives drift), per-CIS-rule evidence from Test-DscConfiguration before/after, reboot signalling
-- [ ] Verified in the lab
+- [x] Verified in the lab: CIS Windows Server 2022 L1 applied in ~2.5 min; re-run reports 293/293 rules compliant. Found and fixed on real Windows: rules the module cannot skip, WinRM MaxEnvelopeSize for large MOFs, CIS 2.3.1.1 (disable the only admin) excluded on EC2
 
 ## Phase 4 — Patching with approval
 
