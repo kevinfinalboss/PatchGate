@@ -103,12 +103,14 @@ locals {
       enabled = var.enable_linux
       type    = var.linux_instance_type
       profile = var.linux_profile
+      appsets = var.linux_appsets
       disk_gb = 8
     }
     windows = {
       enabled = var.enable_windows
       type    = var.windows_instance_type
       profile = var.windows_profile
+      appsets = var.windows_appsets
       disk_gb = 30
     }
   } : k => v if v.enabled }
@@ -143,14 +145,17 @@ resource "aws_instance" "lab" {
     "Patchgate:Managed" = "true"
     "Patchgate:Profile" = each.value.profile
     "Patchgate:Env"     = "lab"
-  })
+  }, each.value.appsets == "" ? {} : { "Patchgate:AppSets" = each.value.appsets })
 
   volume_tags = merge(local.lab_tags, { Name = "patchgate-lab-${each.key}" })
 
   lifecycle {
     # Tags written by Patchgate at runtime must survive later applies.
+    # AppSets are initial values only: afterwards patchgate-cli owns that tag.
     ignore_changes = [
       ami,
+      tags["Patchgate:AppSets"],
+      tags_all["Patchgate:AppSets"],
       tags["Patchgate:BootstrapStatus"],
       tags["Patchgate:BootstrapDigest"],
       tags["Patchgate:BootstrapExecution"],

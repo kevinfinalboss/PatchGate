@@ -62,7 +62,11 @@ class Cli:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.session = boto3.Session(profile_name=args.profile, region_name=args.region)
-        self.store = ConfigStore(args.table, self.session)
+        # Multi-account: the configuration lives in the hub, instances in workload accounts.
+        self.config_session = boto3.Session(
+            profile_name=args.config_profile or args.profile, region_name=args.region
+        )
+        self.store = ConfigStore(args.table, self.config_session)
         self.out = sys.stdout
 
     def print(self, text: str = "") -> None:
@@ -70,7 +74,7 @@ class Cli:
 
     def caller(self) -> str:
         try:
-            return str(self.session.client("sts").get_caller_identity()["Arn"])
+            return str(self.config_session.client("sts").get_caller_identity()["Arn"])
         except Exception:  # attribution is best effort
             return "unknown"
 
@@ -176,7 +180,7 @@ class Cli:
         return 0
 
     def history_items(self, kind: str, name: str) -> list[dict[str, Any]]:
-        table = self.session.resource("dynamodb").Table(self.args.history_table)
+        table = self.config_session.resource("dynamodb").Table(self.args.history_table)
         items: list[dict[str, Any]] = table.query(
             KeyConditionExpression=Key("id").eq(f"{kind}#{name}")
         ).get("Items", [])
@@ -269,7 +273,8 @@ def parser() -> argparse.ArgumentParser:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)  # fmt: skip
     p.add_argument("--table", default="patchgate-config")
     p.add_argument("--history-table", default="patchgate-config-history")
-    p.add_argument("--profile", help="AWS CLI profile")
+    p.add_argument("--profile", help="AWS CLI profile (instances; also config unless overridden)")
+    p.add_argument("--config-profile", help="AWS CLI profile for the hub configuration table")
     p.add_argument("--region")
     p.add_argument("--force", action="store_true", help="override built-in/reference protection")
     sub = p.add_subparsers(dest="command", required=True)

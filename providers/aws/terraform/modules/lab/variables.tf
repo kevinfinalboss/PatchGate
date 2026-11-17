@@ -47,3 +47,15 @@ variable "windows_profile" {
   type        = string
   default     = "web-windows"
 }
+
+variable "linux_appsets" {
+  description = "Initial Patchgate:AppSets tag for the Linux instance (comma-separated, empty for none)."
+  type        = string
+  default     = ""
+}
+
+variable "windows_appsets" {
+  description = "Initial Patchgate:AppSets tag for the Windows instance (comma-separated, empty for none)."
+  type        = string
+  default     = ""
+}
