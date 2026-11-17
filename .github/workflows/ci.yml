@@ -27,8 +27,8 @@ jobs:
       - run: ruff format --check .
       - name: mypy
         run: |
-          paths=$(for p in core/lib core/tests core/scripts/linux providers/aws/functions; do find "$p" -name '*.py' -print -quit | grep -q . && echo "$p" || true; done)
-          if [ -n "$paths" ]; then mypy $paths; fi
+          mypy core/lib core/tests core/scripts/linux providers/aws/tests
+          for fn in providers/aws/functions/*/; do mypy "$fn"; done
       - name: core/ must not import cloud SDKs
         run: "! grep -rnE '^\\s*(import|from)\\s+(boto3|botocore|azure)' core --include='*.py'"
       - name: Validate catalog

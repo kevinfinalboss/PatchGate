@@ -4,7 +4,6 @@ SHELL := /bin/bash
 VENV        ?= .venv
 PY          := $(VENV)/bin/python
 TF_DIRS     := $(shell find providers -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; | sort -u)
-PY_PATHS    := core/lib core/tests core/scripts/linux providers/aws/functions
 SH_SCRIPTS  := $(shell find core/scripts providers/aws/scripts -name '*.sh' 2>/dev/null)
 LIVE        := providers/aws/terraform/live
 ACCOUNT     ?= dev
@@ -24,7 +23,10 @@ lint: ## Lint and format-check Python and Terraform
 	$(VENV)/bin/ruff check .
 	$(VENV)/bin/ruff format --check .
 	terraform fmt -check -recursive providers
-	@if [ -n "$(SH_SCRIPTS)" ]; then shellcheck $(SH_SCRIPTS); fi
+	@if [ -n "$(SH_SCRIPTS)" ]; then \
+	  if command -v shellcheck >/dev/null; then shellcheck $(SH_SCRIPTS); \
+	  else docker run --rm -v "$$PWD:/mnt" -w /mnt koalaman/shellcheck:stable $(SH_SCRIPTS); fi; \
+	fi
 
 .PHONY: format
 format: ## Auto-format Python and Terraform
@@ -33,9 +35,9 @@ format: ## Auto-format Python and Terraform
 	terraform fmt -recursive providers
 
 .PHONY: typecheck
-typecheck: ## Run mypy
-	@paths="$$(for p in $(PY_PATHS); do find $$p -name '*.py' -print -quit | grep -q . && echo $$p; done)"; \
-	  if [ -n "$$paths" ]; then $(VENV)/bin/mypy $$paths; else echo "no Python files to type-check"; fi
+typecheck: ## Run mypy (each Lambda separately: they all use handler.py)
+	$(VENV)/bin/mypy core/lib core/tests core/scripts/linux providers/aws/tests
+	@for fn in providers/aws/functions/*/; do echo "mypy $$fn"; $(VENV)/bin/mypy $$fn || exit 1; done
 
 .PHONY: test
 test: ## Run unit and contract tests
