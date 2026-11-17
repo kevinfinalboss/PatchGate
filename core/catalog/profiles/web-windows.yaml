@@ -1,0 +1,13 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Profile
+metadata:
+  name: web-windows
+  description: Windows web server with admin tooling.
+spec:
+  platform: windows
+  agents: [cloudwatch-agent, microsoft-defender]
+  chocolatey:
+    - name: 7zip
+    - name: notepadplusplus
+  hardening: none
+  ring: 1

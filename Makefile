@@ -4,7 +4,7 @@ SHELL := /bin/bash
 VENV        ?= .venv
 PY          := $(VENV)/bin/python
 TF_DIRS     := $(shell find providers -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; | sort -u)
-PY_PATHS    := core providers/aws/functions
+PY_PATHS    := core/lib core/tests providers/aws/functions
 SH_SCRIPTS  := $(shell find core/scripts -name '*.sh' 2>/dev/null)
 
 .PHONY: help
@@ -55,5 +55,10 @@ boundaries: ## Ensure core/ never imports cloud SDKs
 	@! grep -rnE '^\s*(import|from)\s+(boto3|botocore|azure)' core --include='*.py' || (echo "core/ must not import cloud SDKs" && exit 1)
 	@echo "core/ boundary OK"
 
+
+.PHONY: validate-catalog
+validate-catalog: ## Validate catalog documents against the JSON Schemas
+	$(PY) -m patchgate validate
+
 .PHONY: check
-check: lint typecheck boundaries test validate security ## Run every check (same as CI)
+check: lint typecheck boundaries validate-catalog test validate security ## Run every check (same as CI)

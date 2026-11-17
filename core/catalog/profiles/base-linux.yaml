@@ -1,0 +1,10 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Profile
+metadata:
+  name: base-linux
+  description: Minimum baseline for any Linux server.
+spec:
+  platform: linux
+  agents: [cloudwatch-agent, clamav]
+  hardening: none
+  ring: 0

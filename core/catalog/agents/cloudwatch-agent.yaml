@@ -1,0 +1,70 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Agent
+metadata:
+  name: cloudwatch-agent
+  description: Amazon CloudWatch Agent shipping memory/disk metrics and Patchgate logs.
+spec:
+  install:
+    linux:
+      method: package
+      packages:
+        dnf: [amazon-cloudwatch-agent]
+      postInstall: |
+        install -d -m 0755 /opt/aws/amazon-cloudwatch-agent/etc /var/log/patchgate
+        cat > /opt/aws/amazon-cloudwatch-agent/etc/patchgate.json <<'JSON'
+        {
+          "agent": { "metrics_collection_interval": 60 },
+          "metrics": {
+            "namespace": "Patchgate",
+            "append_dimensions": { "InstanceId": "${aws:InstanceId}" },
+            "metrics_collected": {
+              "mem": { "measurement": ["mem_used_percent"] },
+              "disk": { "measurement": ["used_percent"], "resources": ["/"] }
+            }
+          },
+          "logs": {
+            "logs_collected": {
+              "files": {
+                "collect_list": [
+                  { "file_path": "/var/log/patchgate/*.log", "log_group_name": "/patchgate/instances", "log_stream_name": "{instance_id}/patchgate" }
+                ]
+              }
+            }
+          }
+        }
+        JSON
+        /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s \
+          -c file:/opt/aws/amazon-cloudwatch-agent/etc/patchgate.json
+    windows:
+      method: msi
+      # Pinned version; update source and sha256 together.
+      source: https://amazoncloudwatch-agent.s3.amazonaws.com/windows/amd64/1.300074.1b2005/amazon-cloudwatch-agent.msi
+      sha256: 3891c26f477cc47cf1b3965b18ffb25532b67e4534b60f692cb6605b6bee1577
+      postInstall: |
+        $dir = "$env:ProgramData\Amazon\AmazonCloudWatchAgent"
+        New-Item -ItemType Directory -Force -Path $dir, "$env:ProgramData\Patchgate\logs" | Out-Null
+        @'
+        {
+          "metrics": {
+            "namespace": "Patchgate",
+            "append_dimensions": { "InstanceId": "${aws:InstanceId}" },
+            "metrics_collected": {
+              "Memory": { "measurement": ["% Committed Bytes In Use"] },
+              "LogicalDisk": { "measurement": ["% Free Space"], "resources": ["C:"] }
+            }
+          },
+          "logs": {
+            "logs_collected": {
+              "files": {
+                "collect_list": [
+                  { "file_path": "C:\\ProgramData\\Patchgate\\logs\\*.log", "log_group_name": "/patchgate/instances", "log_stream_name": "{instance_id}/patchgate" }
+                ]
+              }
+            }
+          }
+        }
+        '@ | Set-Content -Encoding UTF8 -Path "$dir\patchgate.json"
+        & "$env:ProgramFiles\Amazon\AmazonCloudWatchAgent\amazon-cloudwatch-agent-ctl.ps1" -a fetch-config -m ec2 -s -c "file:$dir\patchgate.json"
+  validate:
+    linux: systemctl is-active --quiet amazon-cloudwatch-agent
+    windows: if ((Get-Service AmazonCloudWatchAgent).Status -ne 'Running') { exit 1 }

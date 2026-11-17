@@ -1,0 +1,20 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Agent
+metadata:
+  name: microsoft-defender
+  description: Built-in Microsoft Defender Antivirus, configured with real-time, cloud and PUA protection.
+spec:
+  install:
+    windows:
+      method: script
+      script: |
+        if ((Get-WindowsFeature -Name Windows-Defender).InstallState -ne 'Installed') {
+          Install-WindowsFeature -Name Windows-Defender | Out-Null
+          exit 3010  # reboot required; SSM reboots and re-runs the step
+        }
+        Set-MpPreference -DisableRealtimeMonitoring $false -DisableBehaviorMonitoring $false `
+          -DisableIOAVProtection $false -PUAProtection Enabled -MAPSReporting Advanced `
+          -SubmitSamplesConsent SendSafeSamples -ScanScheduleDay Everyday
+        Update-MpSignature -ErrorAction Continue
+  validate:
+    windows: if (-not (Get-MpComputerStatus).RealTimeProtectionEnabled) { exit 1 }

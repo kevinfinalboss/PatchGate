@@ -48,5 +48,5 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-# Python packages are added here as core/lib and provider functions are implemented.
-packages = []
+package-dir = { "" = "core/lib" }
+packages = ["patchgate"]

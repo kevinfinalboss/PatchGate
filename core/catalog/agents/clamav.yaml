@@ -1,0 +1,39 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Agent
+metadata:
+  name: clamav
+  description: ClamAV open-source antivirus with signature updates and a daily scan timer.
+spec:
+  install:
+    linux:
+      method: package
+      packages:
+        dnf: [clamav, clamav-update]
+        apt: [clamav, clamav-freshclam]
+      postInstall: |
+        if [ -f /etc/freshclam.conf ]; then sed -i '/^Example/d' /etc/freshclam.conf; fi
+        freshclam --quiet || echo "freshclam failed (rate limit?); signatures will update on next run"
+        install -d -m 0755 /var/log/patchgate
+        cat > /etc/systemd/system/patchgate-clamscan.service <<'UNIT'
+        [Unit]
+        Description=Patchgate daily ClamAV scan
+        [Service]
+        Type=oneshot
+        Nice=19
+        IOSchedulingClass=idle
+        ExecStart=/bin/sh -c 'freshclam --quiet || true; clamscan -r -i --exclude-dir=^/proc --exclude-dir=^/sys --exclude-dir=^/dev /home /tmp /var /opt >> /var/log/patchgate/clamscan.log 2>&1 || true'
+        UNIT
+        cat > /etc/systemd/system/patchgate-clamscan.timer <<'UNIT'
+        [Unit]
+        Description=Run Patchgate ClamAV scan daily
+        [Timer]
+        OnCalendar=daily
+        RandomizedDelaySec=1h
+        Persistent=true
+        [Install]
+        WantedBy=timers.target
+        UNIT
+        systemctl daemon-reload
+        systemctl enable --now patchgate-clamscan.timer
+  validate:
+    linux: command -v clamscan >/dev/null && systemctl is-enabled --quiet patchgate-clamscan.timer

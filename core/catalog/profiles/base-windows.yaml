@@ -1,0 +1,12 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Profile
+metadata:
+  name: base-windows
+  description: Minimum baseline for any Windows server.
+spec:
+  platform: windows
+  agents: [cloudwatch-agent, microsoft-defender]
+  chocolatey:
+    - name: 7zip
+  hardening: none
+  ring: 0
