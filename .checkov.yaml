@@ -1,0 +1,15 @@
+# Checkov configuration. Every skip below is a deliberate cost/complexity trade-off for a
+# lab-scale deployment and is documented in docs/security/threat-model.md (Accepted risks).
+compact: true
+quiet: true
+framework:
+  - terraform
+  - github_actions
+skip-check:
+  - CKV_AWS_18   # S3 access logging: CloudTrail data events cover audit needs; avoids a log bucket per bucket
+  - CKV_AWS_144  # S3 cross-region replication: not needed for lab state/logs; doubles storage cost
+  - CKV_AWS_145  # S3 SSE-KMS with CMK: SSE-S3 used to avoid US$1/month per key
+  - CKV_AWS_35   # CloudTrail CMK encryption: same reason as CKV_AWS_145
+  - CKV2_AWS_62  # S3 event notifications: no consumer for bucket events
+  - CKV_AWS_252  # CloudTrail SNS topic: no consumer for delivery notifications
+  - CKV2_AWS_10  # CloudTrail to CloudWatch Logs: adds ingestion cost; S3 + Athena is used instead

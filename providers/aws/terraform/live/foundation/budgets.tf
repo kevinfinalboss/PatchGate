@@ -86,14 +86,17 @@ resource "aws_iam_role" "budget_action" {
 
 data "aws_iam_policy_document" "budget_action" {
   statement {
-    sid       = "AttachKillSwitchScp"
-    actions   = ["organizations:AttachPolicy", "organizations:DetachPolicy"]
-    resources = ["*"]
+    sid     = "AttachKillSwitchScpToWorkloads"
+    actions = ["organizations:AttachPolicy", "organizations:DetachPolicy"]
+    resources = [
+      aws_organizations_policy.deny_new_workloads.arn,
+      aws_organizations_organizational_unit.workloads.arn,
+    ]
   }
   statement {
-    sid       = "ReadOrganization"
-    actions   = ["organizations:DescribePolicy", "organizations:ListTargetsForPolicy", "organizations:ListPolicies"]
-    resources = ["*"]
+    sid       = "DescribeKillSwitchScp"
+    actions   = ["organizations:DescribePolicy", "organizations:ListTargetsForPolicy"]
+    resources = [aws_organizations_policy.deny_new_workloads.arn]
   }
 }
 

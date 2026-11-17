@@ -43,3 +43,14 @@ Patchgate can run commands as root/SYSTEM on every managed server in every conne
 ## Review
 
 Revisit this document whenever a phase adds a new trust boundary (for example the approval API in Phase 4 or Azure in Phase 7).
+
+## Accepted risks (lab scale)
+
+These controls are intentionally not implemented to keep the lab near zero cost. They are skipped in `.checkov.yaml` and should be enabled for production deployments.
+
+| Control | Reason |
+|---|---|
+| KMS customer-managed keys for S3 and CloudTrail | US$1/month per key; SSE-S3 used instead |
+| S3 server access logging | CloudTrail already records API access |
+| S3 cross-region replication | Doubles storage; lab data is reproducible |
+| CloudTrail → CloudWatch Logs, SNS notifications | Ingestion cost; logs analysed from S3 |
