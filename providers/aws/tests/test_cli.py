@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 from collections.abc import Iterator
@@ -56,12 +57,8 @@ def aws(monkeypatch: pytest.MonkeyPatch) -> Iterator[ConfigStore]:
 
 def run(*argv: str) -> tuple[int, str, str]:
     out, err = io.StringIO(), io.StringIO()
-    original_out, original_err = cli.sys.stdout, cli.sys.stderr
-    cli.sys.stdout, cli.sys.stderr = out, err
-    try:
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = cli.main(["--region", REGION, *argv])
-    finally:
-        cli.sys.stdout, cli.sys.stderr = original_out, original_err
     return code, out.getvalue(), err.getvalue()
 
 
@@ -98,7 +95,7 @@ def test_apply_creates_and_versions(aws: ConfigStore, tmp_path: Path) -> None:
 
 def test_apply_rejects_invalid_documents(aws: ConfigStore, tmp_path: Path) -> None:
     bad = appset("broken")
-    bad["spec"] = {"platform": "windows", "apps": []}  # type: ignore[assignment]
+    bad["spec"] = {"platform": "windows", "apps": []}
     code, _, err = run("apply", "-f", write(tmp_path, bad))
     assert code == 1 and "should be non-empty" in err
     assert aws.get("AppSet", "broken") is None
