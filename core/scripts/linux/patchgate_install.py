@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import gzip
 import hashlib
 import json
 import logging
@@ -167,12 +168,15 @@ def execute(plan: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------- entrypoint
 
 
+def decode_plan(encoded: str) -> bytes:
+    """Accept "gz1:" + base64(gzip(json)) (what Patchgate sends) or plain base64 JSON."""
+    if encoded.startswith("gz1:"):
+        return gzip.decompress(base64.b64decode(encoded[4:], validate=True))
+    return base64.b64decode(encoded, validate=True)
+
+
 def load_plan(args: argparse.Namespace) -> dict[str, Any]:
-    raw = (
-        base64.b64decode(args.plan_b64, validate=True)
-        if args.plan_b64
-        else args.plan_file.read_bytes()
-    )
+    raw = decode_plan(args.plan_b64) if args.plan_b64 else args.plan_file.read_bytes()
     plan = json.loads(raw)
     if not isinstance(plan, dict):
         raise ValueError("plan must be a JSON object")
@@ -182,7 +186,7 @@ def load_plan(args: argparse.Namespace) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--plan-b64", help="install plan as base64-encoded JSON")
+    source.add_argument("--plan-b64", help="install plan: gz1:<base64 gzip JSON> or base64 JSON")
     source.add_argument("--plan-file", type=Path, help="install plan JSON file")
     parser.add_argument("--force", action="store_true", help="re-run even if digest matches")
     args = parser.parse_args(argv)

@@ -193,7 +193,16 @@ New-Item -ItemType Directory -Force -Path (Split-Path $LogFile) | Out-Null
 
 try {
     $json = if ($PSCmdlet.ParameterSetName -eq 'Base64') {
-        [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($PlanBase64))
+        # "gz1:" + base64(gzip(json)) is what Patchgate sends; plain base64 JSON is also accepted.
+        if ($PlanBase64.StartsWith('gz1:')) {
+            $bytes = [Convert]::FromBase64String($PlanBase64.Substring(4))
+            $gzip = New-Object IO.Compression.GZipStream((New-Object IO.MemoryStream(, $bytes)), [IO.Compression.CompressionMode]::Decompress)
+            $reader = New-Object IO.StreamReader($gzip, [Text.Encoding]::UTF8)
+            try { $reader.ReadToEnd() } finally { $reader.Dispose() }
+        }
+        else {
+            [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($PlanBase64))
+        }
     }
     else {
         Get-Content -Raw -Path $PlanFile

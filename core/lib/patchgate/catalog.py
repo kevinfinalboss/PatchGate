@@ -8,6 +8,7 @@ installer needs, so the VM never reads the catalog or calls a cloud API to decid
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -21,8 +22,10 @@ from jsonschema.exceptions import ValidationError, best_match
 
 API_VERSION = "patchgate.io/v1alpha1"
 SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas"
-# Plans travel as a command parameter; keep them far below provider limits.
-MAX_PLAN_BYTES = 24_000
+# Plans travel as a single command parameter: gzip + base64 with a format prefix.
+# Keep the encoded size well under common provider parameter limits (4 KB).
+PLAN_PREFIX = "gz1:"
+MAX_ENCODED_PLAN_CHARS = 3_800
 
 Document = dict[str, Any]
 
@@ -155,17 +158,26 @@ def _digest(body: Document) -> str:
 
 
 def encode_plan(plan: Document) -> str:
-    """Encode a plan for transport as a single command parameter (base64 of compact JSON)."""
+    """Encode a plan for transport as one command parameter: "gz1:" + base64(gzip(json))."""
     raw = json.dumps(plan, sort_keys=True, separators=(",", ":")).encode()
-    if len(raw) > MAX_PLAN_BYTES:
+    encoded = PLAN_PREFIX + base64.b64encode(gzip.compress(raw, mtime=0)).decode("ascii")
+    if len(encoded) > MAX_ENCODED_PLAN_CHARS:
         raise CatalogError(
-            [f"plan for '{plan.get('profile')}' is {len(raw)} bytes (max {MAX_PLAN_BYTES})"]
+            [
+                f"plan for '{plan.get('profile')}' encodes to {len(encoded)} chars "
+                f"(max {MAX_ENCODED_PLAN_CHARS}); split the profile or shorten scripts"
+            ]
         )
-    return base64.b64encode(raw).decode("ascii")
+    return encoded
 
 
 def decode_plan(encoded: str) -> Document:
-    plan = json.loads(base64.b64decode(encoded, validate=True))
+    """Decode a plan produced by encode_plan (plain base64 JSON is also accepted)."""
+    if encoded.startswith(PLAN_PREFIX):
+        raw = gzip.decompress(base64.b64decode(encoded[len(PLAN_PREFIX) :], validate=True))
+    else:
+        raw = base64.b64decode(encoded, validate=True)
+    plan = json.loads(raw)
     if not isinstance(plan, dict) or plan.get("kind") != "InstallPlan":
         raise CatalogError(["not an InstallPlan"])
     return plan

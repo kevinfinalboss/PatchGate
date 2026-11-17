@@ -6,7 +6,6 @@ from typing import Any
 import pytest
 import yaml
 from patchgate.catalog import (
-    MAX_PLAN_BYTES,
     Catalog,
     CatalogError,
     decode_plan,
@@ -123,9 +122,18 @@ def test_digest_changes_when_catalog_changes(tmp_path: Path) -> None:
 
 
 def test_oversized_plan_is_rejected() -> None:
-    plan = {"kind": "InstallPlan", "profile": "big", "padding": "x" * MAX_PLAN_BYTES}
+    import secrets
+
+    plan = {"kind": "InstallPlan", "profile": "big", "padding": secrets.token_hex(4000)}
     with pytest.raises(CatalogError, match="max"):
         encode_plan(plan)
+
+
+def test_encoded_plan_is_compressed_and_prefixed() -> None:
+    plan = Catalog.load(REAL_CATALOG).compile("web-windows")
+    encoded = encode_plan(plan)
+    assert encoded.startswith("gz1:")
+    assert len(encoded) < 3_800
 
 
 def test_decode_rejects_non_plans() -> None:

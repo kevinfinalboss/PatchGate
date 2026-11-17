@@ -106,3 +106,16 @@ def test_linux_plan_is_rejected(tmp_path: Path) -> None:
     doc["platform"] = "linux"
     code, _ = run(tmp_path, base64.b64encode(json.dumps(doc).encode()).decode())
     assert code == 2
+
+
+def test_accepts_compressed_plans_from_the_catalog(tmp_path: Path) -> None:
+    from patchgate.catalog import encode_plan
+
+    marker = tmp_path / "gz.txt"
+    doc = json.loads(base64.b64decode(plan()))
+    doc["steps"] = [
+        {"agent": "demo", "method": "script", "script": f'Set-Content -Path "{marker}" -Value 1'}
+    ]
+    code, state = run(tmp_path, encode_plan(doc))
+    assert (code, state["status"]) == (0, "success")
+    assert marker.exists()

@@ -132,3 +132,13 @@ def test_real_catalog_linux_plans_are_accepted_by_installer(installer: ModuleTyp
                 assert step["method"] in ("package", "rpm", "deb", "script"), name
                 if step["method"] == "package":
                     installer.packages_for(step, "dnf")
+
+
+def test_accepts_compressed_plans_from_the_catalog(installer: ModuleType, tmp_path: Path) -> None:
+    from patchgate.catalog import encode_plan
+
+    marker = tmp_path / "gz"
+    encoded = encode_plan(plan({"agent": "demo", "method": "script", "script": f"touch {marker}"}))
+    assert encoded.startswith("gz1:")
+    assert installer.main(["--plan-b64", encoded]) == 0
+    assert marker.exists()
