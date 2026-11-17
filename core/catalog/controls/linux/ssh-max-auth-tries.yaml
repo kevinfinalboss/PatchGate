@@ -11,6 +11,12 @@ spec:
   check: sshd -T 2>/dev/null | grep -qi '^maxauthtries 4$'
   remediate: |
     f=/etc/ssh/sshd_config.d/01-patchgate-ssh-max-auth-tries.conf
+    # sshd uses the first value it reads: neutralise the directive anywhere else first.
+    for other in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do
+      if [ -f "$other" ] && [ "$other" != "$f" ]; then
+        sed -i -E 's/^[[:space:]]*(MaxAuthTries)[[:space:]]+/# disabled by patchgate: \1 /I' "$other"
+      fi
+    done
     echo 'MaxAuthTries 4' > "$f"
     if ! sshd -t; then rm -f "$f"; echo "sshd config invalid; reverted" >&2; exit 1; fi
     systemctl reload sshd 2>/dev/null || systemctl reload ssh
