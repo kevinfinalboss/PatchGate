@@ -139,3 +139,15 @@ def test_encoded_plan_is_compressed_and_prefixed() -> None:
 def test_decode_rejects_non_plans() -> None:
     with pytest.raises(CatalogError):
         decode_plan(encode_plan({"kind": "Something"}))
+
+
+def test_windows_scripts_do_not_write_utf8_with_bom() -> None:
+    """Windows PowerShell 5.1 `-Encoding UTF8` adds a BOM that breaks JSON/YAML consumers."""
+    catalog = Catalog.load(REAL_CATALOG)
+    offenders = []
+    for name, agent_doc in catalog.agents.items():
+        windows = agent_doc["spec"]["install"].get("windows", {})
+        for field in ("script", "postInstall"):
+            if "-Encoding UTF8" in windows.get(field, ""):
+                offenders.append(f"{name}.{field}")
+    assert offenders == [], "use [IO.File]::WriteAllText(path, text, UTF8Encoding($false))"

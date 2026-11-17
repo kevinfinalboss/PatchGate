@@ -43,7 +43,7 @@ spec:
       postInstall: |
         $dir = "$env:ProgramData\Amazon\AmazonCloudWatchAgent"
         New-Item -ItemType Directory -Force -Path $dir, "$env:ProgramData\Patchgate\logs" | Out-Null
-        @'
+        $config = @'
         {
           "metrics": {
             "namespace": "Patchgate",
@@ -63,7 +63,9 @@ spec:
             }
           }
         }
-        '@ | Set-Content -Encoding UTF8 -Path "$dir\patchgate.json"
+        '@
+        # Write UTF-8 without BOM: Windows PowerShell 5.1 Set-Content adds one and the agent rejects it.
+        [IO.File]::WriteAllText("$dir\patchgate.json", $config, (New-Object Text.UTF8Encoding $false))
         & "$env:ProgramFiles\Amazon\AmazonCloudWatchAgent\amazon-cloudwatch-agent-ctl.ps1" -a fetch-config -m ec2 -s -c "file:$dir\patchgate.json"
   validate:
     linux: systemctl is-active --quiet amazon-cloudwatch-agent
