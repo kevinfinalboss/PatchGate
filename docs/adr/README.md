@@ -17,3 +17,4 @@ We record significant decisions as ADRs: short documents capturing the context, 
 | [0003](0003-native-orchestration-per-provider.md) | Native orchestration per provider | Accepted |
 | [0004](0004-event-driven-bootstrap.md) | Event-driven bootstrap instead of user data | Accepted |
 | [0005](0005-declarative-agent-catalog.md) | Declarative agent catalog in Git | Accepted |
+| [0006](0006-org-wide-hub-access-and-stackset-spokes.md) | Organization-wide hub access and StackSet-managed spokes | Accepted |

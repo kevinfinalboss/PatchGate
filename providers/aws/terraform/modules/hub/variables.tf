@@ -1,9 +1,10 @@
 variable "organization_id" {
-  description = "AWS Organizations ID; only its accounts may send events or be acted on."
+  description = "AWS Organizations ID; only its accounts may send events or be acted on. null = single-account mode."
   type        = string
+  default     = null
 
   validation {
-    condition     = can(regex("^o-[a-z0-9]{10,32}$", var.organization_id))
+    condition     = var.organization_id == null || can(regex("^o-[a-z0-9]{10,32}$", var.organization_id))
     error_message = "organization_id must look like o-xxxxxxxxxx."
   }
 }

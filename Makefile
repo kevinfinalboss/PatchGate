@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 VENV        ?= .venv
 PY          := $(VENV)/bin/python
-TF_DIRS     := $(shell find providers -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; | sort -u)
+TF_DIRS     := $(shell find providers examples -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; | sort -u)
 SH_SCRIPTS  := $(shell find core/scripts providers/aws/scripts -name '*.sh' 2>/dev/null)
 LIVE        := providers/aws/terraform/live
 ACCOUNT     ?= dev

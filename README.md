@@ -7,14 +7,14 @@
 Cloud-agnostic platform to harden, bootstrap and patch Linux & Windows fleets across accounts — with approval gates and automatic rollback. AWS first, Azure next.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-![Status](https://img.shields.io/badge/status-phase%200%20%E2%80%94%20planning-orange)
+![Status](https://img.shields.io/badge/status-phase%203%20%E2%80%94%20in%20progress-yellow)
 
 </div>
 
 ---
 
 > [!WARNING]
-> Patchgate is in early development (**Phase 0**). The design is documented, but nothing is deployable yet. See the [roadmap](docs/roadmap.md).
+> Patchgate is in early development. Multi-account onboarding and bootstrap work end to end on AWS; hardening and patching are next. See the [roadmap](docs/roadmap.md).
 
 ## What is Patchgate?
 
@@ -28,14 +28,14 @@ Patchgate is built with a **cloud-agnostic core** and **pluggable providers**. A
 
 | | Feature | Status |
 |---|---|---|
-| 🧩 | **Declarative agent catalog** — declare what to install and how (Chocolatey, MSI, packages, scripts), with checksum verification | Planned (Phase 2) |
-| 🚀 | **Automatic bootstrap** — a new instance receives its agents and configuration, driven only by tags | Planned (Phase 2) |
+| 🧩 | **Declarative agent catalog** — declare what to install and how (Chocolatey, MSI, packages, scripts), with checksum verification | ✅ Done |
+| 🚀 | **Automatic bootstrap** — a new instance receives its agents and configuration, driven only by tags | ✅ Done (Linux & Windows) |
 | 🛡️ | **CIS hardening with drift correction** — manual changes are reverted to the baseline | Planned (Phase 3) |
 | 🔁 | **Ring-based patching with approval gates** — snapshot before, health check after, automatic rollback | Planned (Phase 4) |
 | 🖼️ | **Golden images** — hardened, pre-patched images gated by a vulnerability scan | Planned (Phase 5) |
 | 🚨 | **CVE-driven emergency patching** — a critical finding triggers an accelerated flow | Planned (Phase 6) |
 | 📊 | **Compliance and evidence** — dashboard, MTTP and audit-ready reports | Planned (Phase 6) |
-| 🏢 | **Multi-account** — central hub; new accounts are onboarded automatically. Single-account mode supported | Planned (Phase 1) |
+| 🏢 | **Multi-account** — central hub; new accounts are onboarded automatically. Single-account mode supported | ✅ Done |
 | ☁️ | **Multi-cloud by design** — AWS today, Azure next | Planned (Phases 7–8) |
 
 ## How it works

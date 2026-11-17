@@ -127,7 +127,7 @@ An Inspector finding with CVSS ≥ 9 on a managed instance starts the patch work
 
 ## Identity and permissions
 
-- Hub roles (`patchgate-orchestrator`, `patchgate-resolver`, …) may assume only `Patchgate-Execution` in registered spoke accounts.
+- Hub roles (`patchgate-hub-orchestrator`, `patchgate-hub-resolver`) may assume only `Patchgate-Execution`, and only in accounts of the organization (`aws:ResourceOrgID`), so onboarded accounts work without hub changes ([ADR 0006](adr/0006-org-wide-hub-access-and-stackset-spokes.md)).
 - `Patchgate-Execution` trusts those exact hub role ARNs and allows:
   - `ssm:SendCommand` only with `Patchgate-*` documents and on instances tagged `Patchgate:Managed=true`;
   - `ec2:CreateTags` only for tag keys `Patchgate:*`;

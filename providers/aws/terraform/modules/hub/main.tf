@@ -29,7 +29,9 @@ locals {
   # Patchgate-Execution in any account of the organization, so accounts onboarded by the
   # StackSet work without changing the hub. aws:ResourceOrgID keeps it inside the org, and
   # each spoke's trust policy only accepts these exact hub roles.
-  execution_role_arn_pattern = "arn:${local.partition}:iam::*:role/${var.execution_role_name}"
+  # In single-account mode (no organization_id) only this account's role is assumable.
+  single_account             = var.organization_id == null
+  execution_role_arn_pattern = "arn:${local.partition}:iam::${local.single_account ? local.account_id : "*"}:role/${var.execution_role_name}"
 }
 
 # ------------------------------------------------------------------ event bus
@@ -39,6 +41,8 @@ resource "aws_cloudwatch_event_bus" "hub" {
 }
 
 data "aws_iam_policy_document" "bus" {
+  count = local.single_account ? 0 : 1
+
   statement {
     sid       = "AllowOrganizationAccounts"
     actions   = ["events:PutEvents"]
@@ -55,9 +59,11 @@ data "aws_iam_policy_document" "bus" {
   }
 }
 
+# Cross-account delivery needs a bus policy; same-account delivery does not.
 resource "aws_cloudwatch_event_bus_policy" "hub" {
+  count          = local.single_account ? 0 : 1
   event_bus_name = aws_cloudwatch_event_bus.hub.name
-  policy         = data.aws_iam_policy_document.bus.json
+  policy         = data.aws_iam_policy_document.bus[0].json
 }
 
 resource "aws_cloudwatch_event_rule" "ec2_running" {
@@ -160,10 +166,13 @@ data "aws_iam_policy_document" "resolver" {
     sid       = "AssumeExecutionRoleInOrganization"
     actions   = ["sts:AssumeRole"]
     resources = [local.execution_role_arn_pattern]
-    condition {
-      test     = "StringEquals"
-      variable = "aws:ResourceOrgID"
-      values   = [var.organization_id]
+    dynamic "condition" {
+      for_each = local.single_account ? [] : [var.organization_id]
+      content {
+        test     = "StringEquals"
+        variable = "aws:ResourceOrgID"
+        values   = [condition.value]
+      }
     }
   }
   statement {
@@ -229,10 +238,13 @@ data "aws_iam_policy_document" "orchestrator" {
     sid       = "AssumeExecutionRoleInOrganization"
     actions   = ["sts:AssumeRole"]
     resources = [local.execution_role_arn_pattern]
-    condition {
-      test     = "StringEquals"
-      variable = "aws:ResourceOrgID"
-      values   = [var.organization_id]
+    dynamic "condition" {
+      for_each = local.single_account ? [] : [var.organization_id]
+      content {
+        test     = "StringEquals"
+        variable = "aws:ResourceOrgID"
+        values   = [condition.value]
+      }
     }
   }
   statement {

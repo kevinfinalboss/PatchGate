@@ -17,13 +17,13 @@ Each phase ends with: working code, updated docs, an ADR for its main decision a
 - [x] Organization CloudTrail (90-day retention)
 - [x] Documentation skeleton, ADRs 0001–0005, community files
 
-## Phase 1 — Multi-account onboarding
+## Phase 1 — Multi-account onboarding ✅
 
 - [x] Hub module: central event bus and bus policy restricted to the organization
-- [ ] Spoke resources as Terraform module **and** StackSet (auto-deploy to Workloads OU)
+- [x] Spoke resources as Terraform module **and** StackSet (auto-deploy to Workloads OU), generated from the same source
 - [x] `Patchgate-Execution` role and EventBridge forwarder
-- [ ] Single-account mode example
-- [ ] Demo: create a new account in the OU → it is onboarded automatically
+- [x] Single-account mode example
+- [x] Verified: moving an account out of the Workloads OU removes its spoke (~1 min); moving it back re-installs it automatically (~2.5 min)
 
 ## Phase 2 — Bootstrap and agent catalog ✅
 
