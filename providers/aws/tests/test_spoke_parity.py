@@ -38,7 +38,7 @@ def test_event_rule_names_match() -> None:
 
 def test_ssm_documents_and_log_groups_match() -> None:
     assert template_names("AWS::SSM::Document", "Name") == set(
-        re.findall(r'"(Patchgate-Bootstrap-\w+)"', MODULE)
+        re.findall(r'"(Patchgate-(?:Bootstrap-\w+|Drift))"', MODULE)
     )
     assert template_names("AWS::Logs::LogGroup", "LogGroupName") == set(
         re.findall(r'"(/patchgate/[a-z]+)"', MODULE)
@@ -59,3 +59,18 @@ def test_generated_artifacts_are_up_to_date() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout
+
+
+def test_drift_association_matches() -> None:
+    association = TEMPLATE["Resources"]["DriftAssociation"]["Properties"]
+    assert association["AssociationName"] in MODULE
+    assert association["ScheduleExpression"] in MODULE
+    assert association["Targets"] == [{"Key": "tag:Patchgate:Managed", "Values": ["true"]}]
+
+
+def test_hub_can_only_send_bootstrap_documents() -> None:
+    statements = TEMPLATE["Resources"]["ExecutionRole"]["Properties"]["Policies"][0][
+        "PolicyDocument"
+    ]["Statement"]
+    send = next(s for s in statements if s["Sid"] == "RunPatchgateDocuments")
+    assert all("Patchgate-Bootstrap-" in r["Fn::Sub"] for r in send["Resource"])

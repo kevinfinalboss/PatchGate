@@ -1,0 +1,18 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: net-ignore-icmp-redirects
+  description: ICMP redirects are not accepted
+  references:
+    cis: 3.3.2
+spec:
+  platform: linux
+  level: baseline
+  check: '[ "$(sysctl -n net.ipv4.conf.all.accept_redirects)" = "0" ] && [ "$(sysctl -n net.ipv4.conf.default.accept_redirects)" = "0" ]'
+  remediate: |
+    cat > /etc/sysctl.d/60-patchgate-net-ignore-icmp-redirects.conf <<'EOF'
+    net.ipv4.conf.all.accept_redirects = 0
+    net.ipv4.conf.default.accept_redirects = 0
+    EOF
+    sysctl -qw net.ipv4.conf.all.accept_redirects=0
+    sysctl -qw net.ipv4.conf.default.accept_redirects=0

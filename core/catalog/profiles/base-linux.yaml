@@ -6,5 +6,10 @@ metadata:
 spec:
   platform: linux
   agents: [cloudwatch-agent, clamav]
-  hardening: none
   ring: 0
+  hardening:
+    engine: controls
+    level: baseline
+  drift:
+    interval: 30m
+    mode: enforce

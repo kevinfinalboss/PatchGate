@@ -89,6 +89,95 @@ def windows_document(installer: str) -> dict[str, Any]:
     }
 
 
+DRIFT_DOCUMENT = "Patchgate-Drift"
+DRIFT_SCHEDULE = "rate(30 minutes)"  # the executor skips runs until the profile's interval is due
+DRIFT_SOURCE = "io.patchgate"
+DRIFT_DETAIL_TYPE = "Patchgate Drift Detected"
+
+LINUX_DRIFT = f"""set -uo pipefail
+INSTALLER=/opt/patchgate/patchgate_install.py
+EVENT_FILE=/var/lib/patchgate/drift-event.json
+if [ ! -f "$INSTALLER" ]; then echo "not bootstrapped by Patchgate; skipping"; exit 0; fi
+python3 "$INSTALLER" --drift
+rc=$?
+if [ -f "$EVENT_FILE" ]; then
+  TOKEN=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
+  md() {{ curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/$1"; }}
+  REGION=$(md placement/region)
+  IID=$(md instance-id)
+  ENTRIES=$(mktemp)
+  python3 - "$EVENT_FILE" "$IID" > "$ENTRIES" <<'PY'
+import json, sys
+detail = json.load(open(sys.argv[1]))
+detail["instanceId"] = sys.argv[2]
+print(json.dumps([{{"Source": "{DRIFT_SOURCE}", "DetailType": "{DRIFT_DETAIL_TYPE}", "Detail": json.dumps(detail)}}]))
+PY
+  if [ "$(aws events put-events --region "$REGION" --entries "file://$ENTRIES" --query FailedEntryCount --output text)" = "0" ]; then
+    rm -f "$EVENT_FILE"; echo "drift event published"
+  else
+    echo "failed to publish drift event" >&2
+  fi
+  rm -f "$ENTRIES"
+fi
+exit $rc
+"""
+
+WINDOWS_DRIFT = f"""$installer = Join-Path $env:ProgramData 'Patchgate\\bin\\Install-PatchgatePlan.ps1'
+$eventFile = Join-Path $env:ProgramData 'Patchgate\\drift-event.json'
+if (-not (Test-Path $installer)) {{ 'not bootstrapped by Patchgate; skipping'; exit 0 }}
+& $installer -Drift
+$rc = $LASTEXITCODE
+if (Test-Path $eventFile) {{
+  $token = Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{{ 'X-aws-ec2-metadata-token-ttl-seconds' = '60' }}
+  $h = @{{ 'X-aws-ec2-metadata-token' = $token }}
+  $region = Invoke-RestMethod -Headers $h -Uri 'http://169.254.169.254/latest/meta-data/placement/region'
+  $iid = Invoke-RestMethod -Headers $h -Uri 'http://169.254.169.254/latest/meta-data/instance-id'
+  $detail = Get-Content -Raw -Path $eventFile | ConvertFrom-Json
+  $detail | Add-Member -NotePropertyName instanceId -NotePropertyValue $iid -Force
+  $detailJson = $detail | ConvertTo-Json -Depth 8 -Compress
+  $published = $false
+  $aws = (Get-Command aws.exe -ErrorAction SilentlyContinue).Source
+  if (-not $aws -and (Test-Path 'C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe')) {{ $aws = 'C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe' }}
+  if ($aws) {{
+    $entries = '[' + (@{{ Source = '{DRIFT_SOURCE}'; DetailType = '{DRIFT_DETAIL_TYPE}'; Detail = $detailJson }} | ConvertTo-Json -Compress) + ']'
+    $tmp = Join-Path $env:TEMP 'patchgate-entries.json'
+    [IO.File]::WriteAllText($tmp, $entries, (New-Object Text.UTF8Encoding $false))
+    $failed = & $aws events put-events --region $region --entries "file://$tmp" --query FailedEntryCount --output text
+    $published = ($LASTEXITCODE -eq 0 -and "$failed".Trim() -eq '0')
+    Remove-Item -Path $tmp -Force
+  }}
+  elseif (Get-Command Write-EVBEvent -ErrorAction SilentlyContinue) {{
+    $entry = New-Object Amazon.EventBridge.Model.PutEventsRequestEntry
+    $entry.Source = '{DRIFT_SOURCE}'; $entry.DetailType = '{DRIFT_DETAIL_TYPE}'; $entry.Detail = $detailJson
+    $published = ((Write-EVBEvent -Entry $entry -Region $region).FailedEntryCount -eq 0)
+  }}
+  if ($published) {{ Remove-Item -Path $eventFile -Force; 'drift event published' }} else {{ Write-Warning 'failed to publish drift event' }}
+}}
+exit $rc
+"""
+
+
+def drift_document() -> dict[str, Any]:
+    return {
+        "schemaVersion": "2.2",
+        "description": "Patchgate drift check: re-validates agents and hardening, publishes findings.",
+        "mainSteps": [
+            {
+                "action": "aws:runShellScript",
+                "name": "driftLinux",
+                "precondition": {"StringEquals": ["platformType", "Linux"]},
+                "inputs": {"timeoutSeconds": "1800", "runCommand": [LINUX_DRIFT]},
+            },
+            {
+                "action": "aws:runPowerShellScript",
+                "name": "driftWindows",
+                "precondition": {"StringEquals": ["platformType", "Windows"]},
+                "inputs": {"timeoutSeconds": "1800", "runCommand": [WINDOWS_DRIFT]},
+            },
+        ],
+    }
+
+
 def documents() -> dict[str, dict[str, Any]]:
     scripts = ROOT / "core" / "scripts"
     linux = (scripts / "linux" / "patchgate_install.py").read_text()
@@ -96,6 +185,7 @@ def documents() -> dict[str, dict[str, Any]]:
     return {
         "Patchgate-Bootstrap-Linux": linux_document(linux),
         "Patchgate-Bootstrap-Windows": windows_document(windows),
+        DRIFT_DOCUMENT: drift_document(),
     }
 
 
@@ -107,6 +197,7 @@ def template(docs: dict[str, dict[str, Any]]) -> dict[str, Any]:
     doc_arns = [
         sub(f"arn:${{AWS::Partition}}:ssm:${{AWS::Region}}:${{AWS::AccountId}}:document/{name}")
         for name in docs
+        if name.startswith("Patchgate-Bootstrap-")  # the hub only runs bootstrap documents
     ]
     instance_arn = sub("arn:${AWS::Partition}:ec2:*:${AWS::AccountId}:instance/*")
     resources: dict[str, Any] = {
@@ -240,6 +331,33 @@ def template(docs: dict[str, dict[str, Any]]) -> dict[str, Any]:
                 ],
             },
         },
+        "ForwardDriftEvents": {
+            "Type": "AWS::Events::Rule",
+            "Properties": {
+                "Name": "patchgate-forward-drift",
+                "Description": "Forward Patchgate drift findings to the hub.",
+                "EventPattern": {"source": [DRIFT_SOURCE]},
+                "Targets": [
+                    {
+                        "Id": "hub",
+                        "Arn": {"Ref": "HubEventBusArn"},
+                        "RoleArn": {"Fn::GetAtt": ["ForwarderRole", "Arn"]},
+                    }
+                ],
+            },
+        },
+        "DriftAssociation": {
+            "Type": "AWS::SSM::Association",
+            "Properties": {
+                "AssociationName": "patchgate-drift",
+                "Name": {"Ref": DRIFT_DOCUMENT.replace("-", "")},
+                "Targets": [{"Key": "tag:Patchgate:Managed", "Values": ["true"]}],
+                "ScheduleExpression": DRIFT_SCHEDULE,
+                "ApplyOnlyAtCronInterval": True,
+                "MaxConcurrency": "50%",
+                "MaxErrors": "100%",
+            },
+        },
         "InstanceRole": {
             "Type": "AWS::IAM::Role",
             "Properties": {
@@ -257,6 +375,24 @@ def template(docs: dict[str, dict[str, Any]]) -> dict[str, Any]:
                 "ManagedPolicyArns": [
                     sub("arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"),
                     sub("arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy"),
+                ],
+                "Policies": [
+                    {
+                        "PolicyName": "publish-drift-events",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "events:PutEvents",
+                                    "Resource": sub(
+                                        "arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default"
+                                    ),
+                                    "Condition": {"StringEquals": {"events:source": DRIFT_SOURCE}},
+                                }
+                            ],
+                        },
+                    }
                 ],
             },
         },

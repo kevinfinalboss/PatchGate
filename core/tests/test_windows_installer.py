@@ -35,7 +35,7 @@ def plan(*steps: dict[str, Any], digest: str = "sha256:1") -> str:
     return base64.b64encode(json.dumps(doc).encode()).decode()
 
 
-def run(tmp_path: Path, encoded: str, *extra: str) -> tuple[int, dict[str, Any]]:
+def run(tmp_path: Path, encoded: str | None, *extra: str) -> tuple[int, dict[str, Any]]:
     env = {
         **os.environ,
         "ProgramData": str(tmp_path / "pd"),
@@ -45,7 +45,9 @@ def run(tmp_path: Path, encoded: str, *extra: str) -> tuple[int, dict[str, Any]]
     (tmp_path / "tmp").mkdir(exist_ok=True)
     assert PWSH is not None
     proc = subprocess.run(  # noqa: S603
-        [PWSH, "-NoProfile", "-File", str(SCRIPT), "-PlanBase64", encoded, *extra],
+        [PWSH, "-NoProfile", "-File", str(SCRIPT)]
+        + (["-PlanBase64", encoded] if encoded is not None else [])
+        + list(extra),
         env=env,
         capture_output=True,
         text=True,
@@ -129,3 +131,83 @@ def test_locked_log_file_does_not_abort_installation(tmp_path: Path) -> None:
     step = {"agent": "demo", "method": "script", "script": "exit 0"}
     code, state = run(tmp_path, plan(step))
     assert (code, state["status"]) == (0, "success")
+
+
+# ---------------------------------------------------------------- controls engine & drift
+
+
+def control(name: str, target: Path) -> dict[str, str]:
+    return {
+        "name": name,
+        "cis": "1.2.3",
+        "check": f'if (Test-Path "{target}") {{ exit 0 }} else {{ exit 1 }}',
+        "remediate": f'New-Item -ItemType File -Force -Path "{target}" | Out-Null',
+    }
+
+
+def hardened(*controls: dict[str, str], mode: str = "enforce") -> str:
+    doc = json.loads(base64.b64decode(plan()))
+    doc["hardening"] = {"engine": "controls", "level": "baseline", "controls": list(controls)}
+    doc["drift"] = {"interval": "30m", "mode": mode}
+    return base64.b64encode(json.dumps(doc).encode()).decode()
+
+
+def read(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))  # no BOM tolerated
+
+
+def test_controls_are_remediated_with_evidence(tmp_path: Path) -> None:
+    present, missing = tmp_path / "present", tmp_path / "missing"
+    present.touch()
+    code, state = run(tmp_path, hardened(control("ok", present), control("fixme", missing)))
+    assert (code, state["status"]) == (0, "success")
+    assert missing.exists()
+    evidence = read(tmp_path / "pd" / "Patchgate" / "compliance.json")
+    assert {c["control"]: c["status"] for c in evidence["controls"]} == {
+        "ok": "compliant",
+        "fixme": "remediated",
+    }
+    assert (tmp_path / "pd" / "Patchgate" / "plan.json").exists()
+
+
+def test_unfixable_control_fails(tmp_path: Path) -> None:
+    broken = {"name": "broken", "check": "exit 1", "remediate": "exit 0"}
+    code, state = run(tmp_path, hardened(broken))
+    assert code == 1
+    assert "broken" in state["error"]
+
+
+def test_drift_corrects_and_writes_event_without_bom(tmp_path: Path) -> None:
+    setting = tmp_path / "setting"
+    assert run(tmp_path, hardened(control("keep", setting)))[0] == 0
+    setting.unlink()
+    code, state = run(tmp_path, None, "-Drift", "-Force")
+    assert code == 0
+    assert setting.exists()
+    event = read(tmp_path / "pd" / "Patchgate" / "drift-event.json")
+    assert event["findings"] == [{"item": "control:keep", "status": "remediated"}]
+    assert "lastDriftAt" in state
+
+
+def test_drift_audit_mode_only_reports(tmp_path: Path) -> None:
+    setting = tmp_path / "setting"
+    setting.touch()
+    assert run(tmp_path, hardened(control("keep", setting), mode="audit"))[0] == 0
+    setting.unlink()
+    assert run(tmp_path, None, "-Drift", "-Force")[0] == 0
+    assert not setting.exists()
+    event = read(tmp_path / "pd" / "Patchgate" / "drift-event.json")
+    assert event["findings"][0]["status"] == "non-compliant"
+
+
+def test_drift_respects_interval(tmp_path: Path) -> None:
+    setting = tmp_path / "setting"
+    assert run(tmp_path, hardened(control("keep", setting)))[0] == 0
+    assert run(tmp_path, None, "-Drift")[0] == 0  # first run is due
+    setting.unlink()
+    assert run(tmp_path, None, "-Drift")[0] == 0  # not due yet
+    assert not setting.exists()
+
+
+def test_drift_without_applied_plan_is_a_no_op(tmp_path: Path) -> None:
+    assert run(tmp_path, None, "-Drift")[0] == 0

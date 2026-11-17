@@ -1,0 +1,15 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: wdigest-disabled
+  description: WDigest does not store plaintext credentials
+  references:
+    cis: 18.4.8
+spec:
+  platform: windows
+  level: baseline
+  check: if ((Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest' -Name 'UseLogonCredential' -ErrorAction SilentlyContinue).'UseLogonCredential' -eq 0) { exit 0 } else
+    { exit 1 }
+  remediate: |
+    if (-not (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest')) { New-Item -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest' -Force | Out-Null }
+    Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest' -Name 'UseLogonCredential' -Value 0 -Type DWord

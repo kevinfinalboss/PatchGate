@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Patchgate drift check: re-validates agents and hardening, publishes findings.",
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "driftLinux",
+      "precondition": {
+        "StringEquals": [
+          "platformType",
+          "Linux"
+        ]
+      },
+      "inputs": {
+        "timeoutSeconds": "1800",
+        "runCommand": [
+          "set -uo pipefail\nINSTALLER=/opt/patchgate/patchgate_install.py\nEVENT_FILE=/var/lib/patchgate/drift-event.json\nif [ ! -f \"$INSTALLER\" ]; then echo \"not bootstrapped by Patchgate; skipping\"; exit 0; fi\npython3 \"$INSTALLER\" --drift\nrc=$?\nif [ -f \"$EVENT_FILE\" ]; then\n  TOKEN=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')\n  md() { curl -sf -H \"X-aws-ec2-metadata-token: $TOKEN\" \"http://169.254.169.254/latest/meta-data/$1\"; }\n  REGION=$(md placement/region)\n  IID=$(md instance-id)\n  ENTRIES=$(mktemp)\n  python3 - \"$EVENT_FILE\" \"$IID\" > \"$ENTRIES\" <<'PY'\nimport json, sys\ndetail = json.load(open(sys.argv[1]))\ndetail[\"instanceId\"] = sys.argv[2]\nprint(json.dumps([{\"Source\": \"io.patchgate\", \"DetailType\": \"Patchgate Drift Detected\", \"Detail\": json.dumps(detail)}]))\nPY\n  if [ \"$(aws events put-events --region \"$REGION\" --entries \"file://$ENTRIES\" --query FailedEntryCount --output text)\" = \"0\" ]; then\n    rm -f \"$EVENT_FILE\"; echo \"drift event published\"\n  else\n    echo \"failed to publish drift event\" >&2\n  fi\n  rm -f \"$ENTRIES\"\nfi\nexit $rc\n"
+        ]
+      }
+    },
+    {
+      "action": "aws:runPowerShellScript",
+      "name": "driftWindows",
+      "precondition": {
+        "StringEquals": [
+          "platformType",
+          "Windows"
+        ]
+      },
+      "inputs": {
+        "timeoutSeconds": "1800",
+        "runCommand": [
+          "$installer = Join-Path $env:ProgramData 'Patchgate\\bin\\Install-PatchgatePlan.ps1'\n$eventFile = Join-Path $env:ProgramData 'Patchgate\\drift-event.json'\nif (-not (Test-Path $installer)) { 'not bootstrapped by Patchgate; skipping'; exit 0 }\n& $installer -Drift\n$rc = $LASTEXITCODE\nif (Test-Path $eventFile) {\n  $token = Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{ 'X-aws-ec2-metadata-token-ttl-seconds' = '60' }\n  $h = @{ 'X-aws-ec2-metadata-token' = $token }\n  $region = Invoke-RestMethod -Headers $h -Uri 'http://169.254.169.254/latest/meta-data/placement/region'\n  $iid = Invoke-RestMethod -Headers $h -Uri 'http://169.254.169.254/latest/meta-data/instance-id'\n  $detail = Get-Content -Raw -Path $eventFile | ConvertFrom-Json\n  $detail | Add-Member -NotePropertyName instanceId -NotePropertyValue $iid -Force\n  $detailJson = $detail | ConvertTo-Json -Depth 8 -Compress\n  $published = $false\n  $aws = (Get-Command aws.exe -ErrorAction SilentlyContinue).Source\n  if (-not $aws -and (Test-Path 'C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe')) { $aws = 'C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe' }\n  if ($aws) {\n    $entries = '[' + (@{ Source = 'io.patchgate'; DetailType = 'Patchgate Drift Detected'; Detail = $detailJson } | ConvertTo-Json -Compress) + ']'\n    $tmp = Join-Path $env:TEMP 'patchgate-entries.json'\n    [IO.File]::WriteAllText($tmp, $entries, (New-Object Text.UTF8Encoding $false))\n    $failed = & $aws events put-events --region $region --entries \"file://$tmp\" --query FailedEntryCount --output text\n    $published = ($LASTEXITCODE -eq 0 -and \"$failed\".Trim() -eq '0')\n    Remove-Item -Path $tmp -Force\n  }\n  elseif (Get-Command Write-EVBEvent -ErrorAction SilentlyContinue) {\n    $entry = New-Object Amazon.EventBridge.Model.PutEventsRequestEntry\n    $entry.Source = 'io.patchgate'; $entry.DetailType = 'Patchgate Drift Detected'; $entry.Detail = $detailJson\n    $published = ((Write-EVBEvent -Entry $entry -Region $region).FailedEntryCount -eq 0)\n  }\n  if ($published) { Remove-Item -Path $eventFile -Force; 'drift event published' } else { Write-Warning 'failed to publish drift event' }\n}\nexit $rc\n"
+        ]
+      }
+    }
+  ]
+}

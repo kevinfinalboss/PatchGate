@@ -1,0 +1,16 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: ssh-disable-x11-forwarding
+  description: SSH X11 forwarding is disabled
+  references:
+    cis: 5.2.6
+spec:
+  platform: linux
+  level: baseline
+  check: sshd -T 2>/dev/null | grep -qi '^x11forwarding no$'
+  remediate: |
+    f=/etc/ssh/sshd_config.d/01-patchgate-ssh-disable-x11-forwarding.conf
+    echo 'X11Forwarding no' > "$f"
+    if ! sshd -t; then rm -f "$f"; echo "sshd config invalid; reverted" >&2; exit 1; fi
+    systemctl reload sshd 2>/dev/null || systemctl reload ssh

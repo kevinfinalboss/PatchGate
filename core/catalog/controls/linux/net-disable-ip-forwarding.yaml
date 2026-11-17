@@ -1,0 +1,16 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: net-disable-ip-forwarding
+  description: IPv4 forwarding is disabled
+  references:
+    cis: 3.2.1
+spec:
+  platform: linux
+  level: baseline
+  check: '[ "$(sysctl -n net.ipv4.ip_forward)" = "0" ]'
+  remediate: |
+    cat > /etc/sysctl.d/60-patchgate-net-disable-ip-forwarding.conf <<'EOF'
+    net.ipv4.ip_forward = 0
+    EOF
+    sysctl -qw net.ipv4.ip_forward=0

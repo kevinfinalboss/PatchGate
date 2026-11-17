@@ -1,0 +1,16 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: kernel-restrict-suid-dumps
+  description: Core dumps of setuid programs are disabled
+  references:
+    cis: 1.5.1
+spec:
+  platform: linux
+  level: cis-level1
+  check: '[ "$(sysctl -n fs.suid_dumpable)" = "0" ]'
+  remediate: |
+    cat > /etc/sysctl.d/60-patchgate-kernel-restrict-suid-dumps.conf <<'EOF'
+    fs.suid_dumpable = 0
+    EOF
+    sysctl -qw fs.suid_dumpable=0

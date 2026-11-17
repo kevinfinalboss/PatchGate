@@ -29,6 +29,11 @@ MAX_ENCODED_PLAN_CHARS = 3_800
 
 Document = dict[str, Any]
 
+KINDS = ("Agent", "Profile", "Control")
+# Hardening levels are cumulative: a profile at level N gets every control with level <= N.
+LEVELS = {"baseline": 0, "cis-level1": 1}
+DEFAULT_DRIFT = {"interval": "30m", "mode": "enforce"}
+
 
 class CatalogError(ValueError):
     """Raised when the catalog is invalid or a plan cannot be compiled."""
@@ -47,8 +52,8 @@ def _validator(kind: str) -> Draft202012Validator:
 
 def validate_document(doc: Any, source: str = "<memory>") -> list[str]:
     """Return schema errors for one document (empty list when valid)."""
-    if not isinstance(doc, dict) or doc.get("kind") not in ("Agent", "Profile"):
-        return [f"{source}: kind must be 'Agent' or 'Profile'"]
+    if not isinstance(doc, dict) or doc.get("kind") not in KINDS:
+        return [f"{source}: kind must be one of {', '.join(KINDS)}"]
     validator = _validator(str(doc["kind"]))
     errors = sorted(validator.iter_errors(doc), key=lambda e: list(e.absolute_path))
     return [f"{source}: {_describe(err)}" for err in errors]
@@ -74,6 +79,7 @@ def _describe(err: ValidationError) -> str:
 class Catalog:
     agents: dict[str, Document] = field(default_factory=dict)
     profiles: dict[str, Document] = field(default_factory=dict)
+    controls: dict[str, Document] = field(default_factory=dict)
 
     @classmethod
     def load(cls, root: Path) -> Catalog:
@@ -94,7 +100,11 @@ class Catalog:
             name = doc["metadata"]["name"]
             if path.stem != name:
                 errors.append(f"{source}: file name must match metadata.name ({name})")
-            bucket = catalog.agents if doc["kind"] == "Agent" else catalog.profiles
+            bucket = {
+                "Agent": catalog.agents,
+                "Profile": catalog.profiles,
+                "Control": catalog.controls,
+            }[doc["kind"]]
             if name in bucket:
                 errors.append(f"{source}: duplicate {doc['kind']} '{name}'")
             bucket[name] = doc
@@ -118,6 +128,14 @@ class Catalog:
                     )
             if platform != "windows" and spec.get("chocolatey"):
                 errors.append(f"profile '{name}': chocolatey is only supported on windows")
+            for control_name in spec.get("hardening", {}).get("exclude", []):
+                control = self.controls.get(control_name)
+                if control is None:
+                    errors.append(f"profile '{name}': unknown control '{control_name}' in exclude")
+                elif control["spec"]["platform"] != platform:
+                    errors.append(
+                        f"profile '{name}': control '{control_name}' is not for {platform}"
+                    )
         return errors
 
     def compile(self, profile_name: str) -> Document:
@@ -141,12 +159,33 @@ class Catalog:
             "profile": profile_name,
             "platform": platform,
             "ring": spec.get("ring", 0),
-            "hardening": spec.get("hardening", "none"),
             "steps": steps,
             "chocolatey": spec.get("chocolatey", []),
+            "hardening": self._hardening(spec),
+            "drift": {**DEFAULT_DRIFT, **spec.get("drift", {})},
         }
         body["digest"] = _digest(body)
         return body
+
+    def _hardening(self, spec: Document) -> Document | None:
+        hardening = spec.get("hardening")
+        if not hardening:
+            return None
+        level = hardening.get("level", "baseline")
+        excluded = set(hardening.get("exclude", []))
+        controls = [
+            {
+                "name": name,
+                "cis": control["metadata"].get("references", {}).get("cis", ""),
+                "check": control["spec"]["check"],
+                "remediate": control["spec"]["remediate"],
+            }
+            for name, control in sorted(self.controls.items())
+            if control["spec"]["platform"] == spec["platform"]
+            and LEVELS[control["spec"]["level"]] <= LEVELS[level]
+            and name not in excluded
+        ]
+        return {"engine": hardening["engine"], "level": level, "controls": controls}
 
     def compile_all(self) -> dict[str, Document]:
         return {name: self.compile(name) for name in sorted(self.profiles)}

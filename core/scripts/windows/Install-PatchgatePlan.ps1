@@ -11,6 +11,9 @@
     Idempotent: steps whose validation already passes are skipped, and a plan whose digest
     was already applied successfully is only re-validated.
 
+    -Drift re-checks the last applied plan (agents and hardening controls) when its interval is
+    due, correcting or reporting drift and leaving drift-event.json for the provider to publish.
+
     Exit codes: 0 success, 1 failure, 2 invalid input, 3010 reboot required (re-run after reboot).
 #>
 [CmdletBinding(DefaultParameterSetName = 'Base64')]
@@ -20,6 +23,9 @@ param(
 
     [Parameter(Mandatory, ParameterSetName = 'File')]
     [string]$PlanFile,
+
+    [Parameter(Mandatory, ParameterSetName = 'Drift')]
+    [switch]$Drift,
 
     [switch]$Force
 )
@@ -32,6 +38,11 @@ $ProgressPreference = 'SilentlyContinue'
 $Root = Join-Path $env:ProgramData 'Patchgate'
 $LogFile = Join-Path $Root 'logs\install.log'
 $StateFile = Join-Path $Root 'state.json'
+$AppliedPlanFile = Join-Path $Root 'plan.json'          # last applied plan, re-used by drift runs
+$ComplianceFile = Join-Path $Root 'compliance.json'     # evidence: last result of every control
+$DriftEventFile = Join-Path $Root 'drift-event.json'    # picked up and published by the provider
+$DriftIntervals = @{ '30m' = 1800; '1h' = 3600; '2h' = 7200; '6h' = 21600; '12h' = 43200; '24h' = 86400 }
+$DriftSlackSeconds = 120
 
 # Chocolatey is bootstrapped from its pinned package, never from a remote install script.
 $ChocoVersion = '2.7.5'
@@ -71,10 +82,40 @@ function Write-PatchgateLog {
     }
 }
 
+function Write-JsonFile {
+    # UTF-8 without BOM: consumers such as the AWS CLI and JSON parsers reject a BOM.
+    param([string]$Path, $Data)
+    $json = $Data | ConvertTo-Json -Depth 8
+    $tmp = "$Path.tmp"
+    [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding $false))
+    Move-Item -Path $tmp -Destination $Path -Force
+}
+
+function Get-Prop {
+    # StrictMode-safe property access with a default (older plans may lack newer fields).
+    param($Object, [string]$Name, $Default = $null)
+    if ($null -ne $Object -and $Object.PSObject.Properties.Name -contains $Name) { return $Object.$Name }
+    return $Default
+}
+
+function Read-State {
+    $state = @{}
+    if (Test-Path $StateFile) {
+        $raw = Get-Content -Raw -Path $StateFile | ConvertFrom-Json
+        foreach ($p in $raw.PSObject.Properties) { $state[$p.Name] = $p.Value }
+    }
+    return $state
+}
+
 function Save-State {
-    param([hashtable]$State)
-    $State['updatedAt'] = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-    $State | ConvertTo-Json -Depth 6 | Set-Content -Path $StateFile -Encoding UTF8
+    # Merge into the existing state so fields such as lastDriftAt survive.
+    param([hashtable]$Fields)
+    $state = Read-State
+    foreach ($key in $Fields.Keys) {
+        if ($null -eq $Fields[$key]) { $state.Remove($key) } else { $state[$key] = $Fields[$key] }
+    }
+    $state['updatedAt'] = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    Write-JsonFile -Path $StateFile -Data $state
 }
 
 function Invoke-Native {
@@ -204,8 +245,116 @@ function Install-Step {
     return $false
 }
 
+function Invoke-Hardening {
+    # The 'controls' hardening engine. Returns one result per control:
+    # compliant | remediated | non-compliant (audit) | failed (remediation did not fix it).
+    param($Hardening, [string]$Mode)
+    $results = @()
+    if ($null -eq $Hardening -or $Hardening -is [string]) { return $results }
+    if ($Hardening.engine -ne 'controls') { throw "unsupported hardening engine: $($Hardening.engine)" }
+    foreach ($control in $Hardening.controls) {
+        if ((Invoke-PlanScript -Script $control.check) -eq 0) {
+            $status = 'compliant'
+        }
+        elseif ($Mode -eq 'audit') {
+            $status = 'non-compliant'
+        }
+        else {
+            $code = Invoke-PlanScript -Script $control.remediate
+            if ($code -ne 0) { Write-PatchgateLog "control $($control.name) remediation exited with $code" 'ERROR' }
+            $status = if ((Invoke-PlanScript -Script $control.check) -eq 0) { 'remediated' } else { 'failed' }
+        }
+        Write-PatchgateLog ("control {0,-32} {1}" -f $control.name, $status)
+        $results += [ordered]@{ control = $control.name; cis = (Get-Prop $control 'cis' ''); status = $status }
+    }
+    Write-JsonFile -Path $ComplianceFile -Data ([ordered]@{
+            level     = $Hardening.level
+            mode      = $Mode
+            checkedAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            controls  = $results
+        })
+    return $results
+}
+
+function Get-Summary {
+    param($Results)
+    $summary = @{}
+    foreach ($r in $Results) {
+        if ($summary.ContainsKey($r.status)) { $summary[$r.status] += 1 } else { $summary[$r.status] = 1 }
+    }
+    return $summary
+}
+
+function Invoke-Drift {
+    # Returns the exit code for a drift run.
+    if (-not (Test-Path $AppliedPlanFile)) {
+        Write-PatchgateLog 'no applied plan yet; nothing to check'
+        return 0
+    }
+    $plan = Get-Content -Raw -Path $AppliedPlanFile | ConvertFrom-Json
+    $driftCfg = Get-Prop $plan 'drift'
+    $interval = Get-Prop $driftCfg 'interval' '30m'
+    $mode = Get-Prop $driftCfg 'mode' 'enforce'
+    $state = Read-State
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    if ($interval -eq 'off') { Write-PatchgateLog 'drift checks are off for this profile'; return 0 }
+    if (-not $Force -and $state.ContainsKey('lastDriftAt') -and
+        ($now - [double]$state['lastDriftAt']) -lt ($DriftIntervals[$interval] - $DriftSlackSeconds)) {
+        Write-PatchgateLog "drift check not due (interval $interval)"
+        return 0
+    }
+
+    Write-PatchgateLog "== drift check (interval $interval, mode $mode)"
+    $findings = @()
+    $work = Join-Path $env:TEMP ("patchgate-{0}" -f [guid]::NewGuid())
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    try {
+        foreach ($step in $plan.steps) {
+            if (-not ($step.PSObject.Properties.Name -contains 'validate') -or (Test-Step -Step $step)) { continue }
+            if ($mode -eq 'audit') { $findings += [ordered]@{ item = "agent:$($step.agent)"; status = 'non-compliant' }; continue }
+            try {
+                [void](Install-Step -Step $step -WorkDir $work)
+                Assert-Step -Step $step
+                $findings += [ordered]@{ item = "agent:$($step.agent)"; status = 'remediated' }
+            }
+            catch {
+                Write-PatchgateLog "agent $($step.agent) could not be restored: $_" 'ERROR'
+                $findings += [ordered]@{ item = "agent:$($step.agent)"; status = 'failed' }
+            }
+        }
+    }
+    finally {
+        Remove-Item -Path $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    foreach ($r in @(Invoke-Hardening -Hardening (Get-Prop $plan 'hardening') -Mode $mode)) {
+        if ($r.status -ne 'compliant') { $findings += [ordered]@{ item = "control:$($r.control)"; status = $r.status } }
+    }
+
+    Save-State @{ lastDriftAt = $now }
+    if ($findings.Count -gt 0) {
+        Write-JsonFile -Path $DriftEventFile -Data ([ordered]@{
+                profile    = $plan.profile
+                digest     = $plan.digest
+                mode       = $mode
+                findings   = $findings
+                detectedAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            })
+        Write-PatchgateLog ("PATCHGATE_DRIFT " + ($findings | ConvertTo-Json -Compress -Depth 4)) 'WARN'
+    }
+    else {
+        Write-PatchgateLog 'no drift detected'
+    }
+    if ($findings | Where-Object { $_.status -eq 'failed' }) { return 1 }
+    return 0
+}
+
 # ------------------------------------------------------------------ main
 New-Item -ItemType Directory -Force -Path (Split-Path $LogFile) | Out-Null
+
+if ($Drift -and $PSCmdlet.ParameterSetName -eq 'Drift') {
+    try { exit (Invoke-Drift) }
+    catch { Write-PatchgateLog "drift check FAILED: $_" 'ERROR'; exit 1 }
+}
 
 try {
     $json = if ($PSCmdlet.ParameterSetName -eq 'Base64') {
@@ -231,9 +380,9 @@ catch {
     exit 2
 }
 
-if (-not $Force -and (Test-Path $StateFile)) {
-    $state = Get-Content -Raw -Path $StateFile | ConvertFrom-Json
-    if ($state.digest -eq $plan.digest -and $state.status -eq 'success') {
+if (-not $Force) {
+    $state = Read-State
+    if ($state['digest'] -eq $plan.digest -and $state['status'] -eq 'success') {
         Write-PatchgateLog "plan $($plan.digest) already applied; validating only"
         try {
             foreach ($step in $plan.steps) { Assert-Step -Step $step }
@@ -273,7 +422,9 @@ try {
         $results += @{ agent = "choco:$($package.name)"; status = 'ok' }
     }
 
-    if ($plan.hardening -ne 'none') { Write-PatchgateLog "hardening level $($plan.hardening) not implemented yet; skipped" 'WARN' }
+    $controls = @(Invoke-Hardening -Hardening (Get-Prop $plan 'hardening') -Mode 'enforce')
+    $failed = @($controls | Where-Object { $_.status -eq 'failed' } | ForEach-Object { $_.control })
+    if ($failed.Count -gt 0) { throw "hardening controls could not be remediated: $($failed -join ', ')" }
 }
 catch {
     Write-PatchgateLog "FAILED: $_" 'ERROR'
@@ -284,8 +435,13 @@ finally {
     Remove-Item -Path $work -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Save-State @{ digest = $plan.digest; status = 'success'; result = @{ profile = $plan.profile; steps = $results } }
+$hardeningSummary = Get-Summary $controls
+Write-JsonFile -Path $AppliedPlanFile -Data $plan
+Save-State @{
+    digest = $plan.digest; status = 'success'; error = $null
+    result = @{ profile = $plan.profile; steps = $results; hardening = $hardeningSummary }
+}
 Write-PatchgateLog "SUCCESS: profile $($plan.profile) applied"
-Write-Output (@{ patchgate = @{ profile = $plan.profile; digest = $plan.digest; steps = $results } } | ConvertTo-Json -Depth 5 -Compress)
+Write-Output (@{ patchgate = @{ profile = $plan.profile; digest = $plan.digest; steps = $results; hardening = $hardeningSummary } } | ConvertTo-Json -Depth 5 -Compress)
 if ($rebootNeeded) { exit $RebootExitCode }
 exit 0

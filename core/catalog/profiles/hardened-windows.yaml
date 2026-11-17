@@ -1,0 +1,17 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Profile
+metadata:
+  name: hardened-windows
+  description: Windows server hardened to the CIS Level 1 subset of the controls engine.
+spec:
+  platform: windows
+  agents: [cloudwatch-agent, microsoft-defender]
+  chocolatey:
+    - name: 7zip
+  hardening:
+    engine: controls
+    level: cis-level1
+  drift:
+    interval: 30m
+    mode: enforce
+  ring: 0

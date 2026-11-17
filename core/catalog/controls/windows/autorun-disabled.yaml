@@ -1,0 +1,15 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: autorun-disabled
+  description: AutoRun is disabled for all drives
+  references:
+    cis: 18.9.8.3
+spec:
+  platform: windows
+  level: cis-level1
+  check: if ((Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' -Name 'NoDriveTypeAutoRun' -ErrorAction SilentlyContinue).'NoDriveTypeAutoRun' -eq 255) { exit 0
+    } else { exit 1 }
+  remediate: |
+    if (-not (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer')) { New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' -Force | Out-Null }
+    Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' -Name 'NoDriveTypeAutoRun' -Value 255 -Type DWord

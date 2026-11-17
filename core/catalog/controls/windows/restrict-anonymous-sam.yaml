@@ -1,0 +1,14 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: restrict-anonymous-sam
+  description: Anonymous enumeration of SAM accounts is not allowed
+  references:
+    cis: 2.3.10.2
+spec:
+  platform: windows
+  level: cis-level1
+  check: if ((Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'RestrictAnonymousSAM' -ErrorAction SilentlyContinue).'RestrictAnonymousSAM' -eq 1) { exit 0 } else { exit 1 }
+  remediate: |
+    if (-not (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa')) { New-Item -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Force | Out-Null }
+    Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'RestrictAnonymousSAM' -Value 1 -Type DWord

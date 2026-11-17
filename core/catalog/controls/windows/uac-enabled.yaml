@@ -1,0 +1,14 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: uac-enabled
+  description: User Account Control is enabled
+  references:
+    cis: 2.3.17.6
+spec:
+  platform: windows
+  level: baseline
+  check: if ((Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'EnableLUA' -ErrorAction SilentlyContinue).'EnableLUA' -eq 1) { exit 0 } else { exit 1 }
+  remediate: |
+    if (-not (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System')) { New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Force | Out-Null }
+    Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'EnableLUA' -Value 1 -Type DWord

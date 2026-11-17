@@ -18,3 +18,4 @@ We record significant decisions as ADRs: short documents capturing the context, 
 | [0004](0004-event-driven-bootstrap.md) | Event-driven bootstrap instead of user data | Accepted |
 | [0005](0005-declarative-agent-catalog.md) | Declarative agent catalog in Git | Accepted |
 | [0006](0006-org-wide-hub-access-and-stackset-spokes.md) | Organization-wide hub access and StackSet-managed spokes | Accepted |
+| [0007](0007-pluggable-hardening-engines.md) | Pluggable hardening engines, starting with a native controls engine | Accepted |

@@ -9,5 +9,10 @@ spec:
   chocolatey:
     - name: 7zip
     - name: notepadplusplus
-  hardening: none
   ring: 1
+  hardening:
+    engine: controls
+    level: baseline
+  drift:
+    interval: 30m
+    mode: enforce

@@ -67,7 +67,7 @@ data "aws_iam_policy_document" "execution" {
   statement {
     sid       = "RunPatchgateDocuments"
     actions   = ["ssm:SendCommand"]
-    resources = [for d in aws_ssm_document.bootstrap : d.arn]
+    resources = [for name, d in aws_ssm_document.bootstrap : d.arn if name != "Patchgate-Drift"]
   }
 
   statement {
@@ -150,12 +150,40 @@ resource "aws_cloudwatch_event_target" "hub" {
 resource "aws_ssm_document" "bootstrap" {
   # Content is generated from core/ by providers/aws/stacksets/generate.py and shared with
   # the StackSet template, so single-account and multi-account deployments stay identical.
-  for_each = toset(["Patchgate-Bootstrap-Linux", "Patchgate-Bootstrap-Windows"])
+  for_each = toset(["Patchgate-Bootstrap-Linux", "Patchgate-Bootstrap-Windows", "Patchgate-Drift"])
 
   name            = each.value
   document_type   = "Command"
   document_format = "JSON"
   content         = file("${local.repo_root}/providers/aws/ssm/${each.value}.json")
+}
+
+# ------------------------------------------------------------------ drift
+
+resource "aws_ssm_association" "drift" {
+  association_name            = "patchgate-drift"
+  name                        = aws_ssm_document.bootstrap["Patchgate-Drift"].name
+  schedule_expression         = "rate(30 minutes)" # the executor skips runs until the profile's interval is due
+  apply_only_at_cron_interval = true
+  max_concurrency             = "50%"
+  max_errors                  = "100%"
+
+  targets {
+    key    = "tag:Patchgate:Managed"
+    values = ["true"]
+  }
+}
+
+resource "aws_cloudwatch_event_rule" "drift" {
+  name          = "patchgate-forward-drift"
+  description   = "Forward Patchgate drift findings to the hub."
+  event_pattern = jsonencode({ source = ["io.patchgate"] })
+}
+
+resource "aws_cloudwatch_event_target" "drift" {
+  rule     = aws_cloudwatch_event_rule.drift.name
+  arn      = var.hub_event_bus_arn
+  role_arn = aws_iam_role.forwarder.arn
 }
 
 # ------------------------------------------------------------------ instance profile & logs
@@ -182,6 +210,22 @@ resource "aws_iam_role_policy_attachment" "instance" {
   ])
   role       = aws_iam_role.instance.name
   policy_arn = each.value
+}
+
+data "aws_region" "current" {}
+
+resource "aws_iam_role_policy" "instance_drift_events" {
+  name = "publish-drift-events"
+  role = aws_iam_role.instance.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "events:PutEvents"
+      Resource  = "arn:${local.partition}:events:${data.aws_region.current.region}:${local.account_id}:event-bus/default"
+      Condition = { StringEquals = { "events:source" = "io.patchgate" } }
+    }]
+  })
 }
 
 resource "aws_iam_instance_profile" "instance" {

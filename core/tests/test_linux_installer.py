@@ -23,7 +23,12 @@ def installer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     sys.modules["patchgate_install"] = module
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, "LOG_DIR", tmp_path / "log")
-    monkeypatch.setattr(module, "STATE_FILE", tmp_path / "state.json")
+    state_dir = tmp_path / "state"
+    monkeypatch.setattr(module, "STATE_DIR", state_dir)
+    monkeypatch.setattr(module, "STATE_FILE", state_dir / "state.json")
+    monkeypatch.setattr(module, "PLAN_FILE", state_dir / "plan.json")
+    monkeypatch.setattr(module, "COMPLIANCE_FILE", state_dir / "compliance.json")
+    monkeypatch.setattr(module, "DRIFT_EVENT_FILE", state_dir / "drift-event.json")
     monkeypatch.setattr(module, "VALIDATE_ATTEMPTS", 2)
     monkeypatch.setattr(module, "VALIDATE_DELAY_SECONDS", 0)
     monkeypatch.setattr(module, "detect_package_manager", lambda: "dnf")
@@ -36,7 +41,8 @@ def plan(*steps: dict[str, Any]) -> dict[str, Any]:
         "platform": "linux",
         "profile": "test",
         "digest": "sha256:" + "0" * 64,
-        "hardening": "none",
+        "hardening": None,
+        "drift": {"interval": "30m", "mode": "enforce"},
         "steps": list(steps),
     }
 
@@ -54,7 +60,7 @@ def test_script_step_runs_and_validates(installer: ModuleType, tmp_path: Path) -
         "validate": f"test -f {marker}",
     }
     assert installer.main(["--plan-b64", b64(plan(step))]) == 0
-    state = json.loads((tmp_path / "state.json").read_text())
+    state = json.loads((tmp_path / "state" / "state.json").read_text())
     assert state["status"] == "success"
     assert marker.exists()
 
@@ -62,7 +68,7 @@ def test_script_step_runs_and_validates(installer: ModuleType, tmp_path: Path) -
 def test_failing_script_fails_plan_and_records_state(installer: ModuleType, tmp_path: Path) -> None:
     step = {"agent": "broken", "method": "script", "script": "exit 7"}
     assert installer.main(["--plan-b64", b64(plan(step))]) == 1
-    assert json.loads((tmp_path / "state.json").read_text())["status"] == "failed"
+    assert json.loads((tmp_path / "state" / "state.json").read_text())["status"] == "failed"
 
 
 def test_validation_failure_fails_plan(installer: ModuleType) -> None:
@@ -142,3 +148,127 @@ def test_accepts_compressed_plans_from_the_catalog(installer: ModuleType, tmp_pa
     assert encoded.startswith("gz1:")
     assert installer.main(["--plan-b64", encoded]) == 0
     assert marker.exists()
+
+
+# ---------------------------------------------------------------- controls engine & drift
+
+
+def control(name: str, target: Path) -> dict[str, str]:
+    """A control whose 'setting' is the presence of a file."""
+    return {
+        "name": name,
+        "cis": "1.2.3",
+        "check": f"test -f {target}",
+        "remediate": f"touch {target}",
+    }
+
+
+def hardened_plan(*controls: dict[str, str], mode: str = "enforce", interval: str = "30m") -> Any:
+    doc = plan()
+    doc["hardening"] = {"engine": "controls", "level": "baseline", "controls": list(controls)}
+    doc["drift"] = {"interval": interval, "mode": mode}
+    return doc
+
+
+def state_dir(tmp_path: Path) -> Path:
+    return tmp_path / "state"
+
+
+def test_controls_are_remediated_and_evidence_is_written(
+    installer: ModuleType, tmp_path: Path
+) -> None:
+    already = tmp_path / "already"
+    already.touch()
+    missing = tmp_path / "missing"
+    doc = hardened_plan(control("ok", already), control("fixme", missing))
+    assert installer.main(["--plan-b64", b64(doc)]) == 0
+    assert missing.exists()
+    evidence = json.loads((state_dir(tmp_path) / "compliance.json").read_text())
+    assert {c["control"]: c["status"] for c in evidence["controls"]} == {
+        "ok": "compliant",
+        "fixme": "remediated",
+    }
+    assert json.loads((state_dir(tmp_path) / "plan.json").read_text())["digest"] == doc["digest"]
+
+
+def test_unfixable_control_fails_bootstrap(installer: ModuleType, tmp_path: Path) -> None:
+    broken = {"name": "broken", "check": "false", "remediate": "true"}
+    assert installer.main(["--plan-b64", b64(hardened_plan(broken))]) == 1
+    state = json.loads((state_dir(tmp_path) / "state.json").read_text())
+    assert "broken" in state["error"]
+
+
+def test_drift_corrects_manual_changes_and_emits_event(
+    installer: ModuleType, tmp_path: Path
+) -> None:
+    setting = tmp_path / "setting"
+    assert installer.main(["--plan-b64", b64(hardened_plan(control("keep", setting)))]) == 0
+    setting.unlink()  # someone reverts the hardening by hand
+    assert installer.main(["--drift", "--force"]) == 0
+    assert setting.exists()
+    event = json.loads((state_dir(tmp_path) / "drift-event.json").read_text())
+    assert event["findings"] == [{"item": "control:keep", "status": "remediated"}]
+
+
+def test_drift_audit_mode_only_reports(installer: ModuleType, tmp_path: Path) -> None:
+    setting = tmp_path / "setting"
+    doc = hardened_plan(control("keep", setting), mode="audit")
+    setting.touch()
+    assert installer.main(["--plan-b64", b64(doc)]) == 0
+    setting.unlink()
+    assert installer.main(["--drift", "--force"]) == 0
+    assert not setting.exists()
+    event = json.loads((state_dir(tmp_path) / "drift-event.json").read_text())
+    assert event["findings"][0]["status"] == "non-compliant"
+
+
+def test_drift_reinstalls_agent_that_was_removed(installer: ModuleType, tmp_path: Path) -> None:
+    marker = tmp_path / "agent"
+    step = {
+        "agent": "demo",
+        "method": "script",
+        "script": f"touch {marker}",
+        "validate": f"test -f {marker}",
+    }
+    assert installer.main(["--plan-b64", b64(plan(step))]) == 0
+    marker.unlink()
+    assert installer.main(["--drift", "--force"]) == 0
+    assert marker.exists()
+
+
+def test_no_drift_writes_no_event(installer: ModuleType, tmp_path: Path) -> None:
+    setting = tmp_path / "setting"
+    assert installer.main(["--plan-b64", b64(hardened_plan(control("keep", setting)))]) == 0
+    assert installer.main(["--drift", "--force"]) == 0
+    assert not (state_dir(tmp_path) / "drift-event.json").exists()
+
+
+def test_drift_without_applied_plan_is_a_no_op(installer: ModuleType) -> None:
+    assert installer.main(["--drift"]) == 0
+
+
+@pytest.mark.parametrize(
+    ("interval", "elapsed", "due"),
+    [
+        ("30m", 0, False),
+        ("30m", 1700, True),  # within the slack window
+        ("2h", 3600, False),
+        ("2h", 7200, True),
+        ("off", 999_999, False),
+    ],
+)
+def test_drift_interval(installer: ModuleType, interval: str, elapsed: int, due: bool) -> None:
+    assert installer.drift_due(interval, 1_000_000.0, 1_000_000.0 + elapsed) is due
+
+
+def test_first_drift_run_is_always_due(installer: ModuleType) -> None:
+    assert installer.drift_due("24h", None, 0.0) is True
+
+
+def test_drift_respects_interval_between_runs(installer: ModuleType, tmp_path: Path) -> None:
+    setting = tmp_path / "setting"
+    assert installer.main(["--plan-b64", b64(hardened_plan(control("keep", setting)))]) == 0
+    assert installer.main(["--drift"]) == 0  # first run: due
+    setting.unlink()
+    assert installer.main(["--drift"]) == 0  # 30m not elapsed: skipped
+    assert not setting.exists()

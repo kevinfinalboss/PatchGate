@@ -1,0 +1,14 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: disable-cramfs
+  description: The cramfs filesystem module cannot be loaded
+  references:
+    cis: 1.1.1.1
+spec:
+  platform: linux
+  level: cis-level1
+  check: grep -qs '^install cramfs /bin/false' /etc/modprobe.d/patchgate-cramfs.conf && ! lsmod | grep -q '^cramfs '
+  remediate: |
+    echo 'install cramfs /bin/false' > /etc/modprobe.d/patchgate-cramfs.conf
+    modprobe -r cramfs 2>/dev/null || true

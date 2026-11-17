@@ -1,0 +1,13 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: firewall-enabled
+  description: Windows Firewall is enabled for all profiles
+  references:
+    cis: 9.1.1
+spec:
+  platform: windows
+  level: baseline
+  check: if (Get-NetFirewallProfile | Where-Object { -not $_.Enabled }) { exit 1 } else { exit 0 }
+  remediate: |
+    Set-NetFirewallProfile -All -Enabled True

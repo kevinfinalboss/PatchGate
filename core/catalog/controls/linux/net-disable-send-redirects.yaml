@@ -1,0 +1,18 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: net-disable-send-redirects
+  description: ICMP redirects are not sent
+  references:
+    cis: 3.2.2
+spec:
+  platform: linux
+  level: baseline
+  check: '[ "$(sysctl -n net.ipv4.conf.all.send_redirects)" = "0" ] && [ "$(sysctl -n net.ipv4.conf.default.send_redirects)" = "0" ]'
+  remediate: |
+    cat > /etc/sysctl.d/60-patchgate-net-disable-send-redirects.conf <<'EOF'
+    net.ipv4.conf.all.send_redirects = 0
+    net.ipv4.conf.default.send_redirects = 0
+    EOF
+    sysctl -qw net.ipv4.conf.all.send_redirects=0
+    sysctl -qw net.ipv4.conf.default.send_redirects=0

@@ -97,14 +97,14 @@ resource "aws_iam_role" "events" {
 }
 
 resource "aws_iam_role_policy" "events" {
-  name = "start-bootstrap"
+  name = "start-workflows"
   role = aws_iam_role.events.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect   = "Allow"
       Action   = "states:StartExecution"
-      Resource = aws_sfn_state_machine.bootstrap.arn
+      Resource = [aws_sfn_state_machine.bootstrap.arn, aws_sfn_state_machine.notify_drift.arn]
     }]
   })
 }
@@ -294,6 +294,50 @@ resource "aws_sfn_state_machine" "bootstrap" {
 
   logging_configuration {
     log_destination        = "${aws_cloudwatch_log_group.workflow.arn}:*"
+    include_execution_data = true
+    level                  = "ERROR"
+  }
+
+  depends_on = [aws_iam_role_policy.orchestrator]
+}
+
+# ------------------------------------------------------------------ drift notifications
+
+resource "aws_cloudwatch_event_rule" "drift" {
+  name           = "patchgate-drift-detected"
+  description    = "Drift findings published by managed instances."
+  event_bus_name = aws_cloudwatch_event_bus.hub.name
+  event_pattern = jsonencode({
+    source        = ["io.patchgate"]
+    "detail-type" = ["Patchgate Drift Detected"]
+  })
+}
+
+resource "aws_cloudwatch_event_target" "drift" {
+  rule           = aws_cloudwatch_event_rule.drift.name
+  event_bus_name = aws_cloudwatch_event_bus.hub.name
+  arn            = aws_sfn_state_machine.notify_drift.arn
+  role_arn       = aws_iam_role.events.arn
+}
+
+resource "aws_cloudwatch_log_group" "notify_drift" {
+  name              = "/aws/vendedlogs/states/patchgate-notify-drift"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_sfn_state_machine" "notify_drift" {
+  name     = "patchgate-notify-drift"
+  role_arn = aws_iam_role.orchestrator.arn
+  definition = templatefile("${local.repo_root}/providers/aws/workflows/notify-drift.asl.json", {
+    topic_arn = aws_sns_topic.notifications.arn
+  })
+
+  tracing_configuration {
+    enabled = true
+  }
+
+  logging_configuration {
+    log_destination        = "${aws_cloudwatch_log_group.notify_drift.arn}:*"
     include_execution_data = true
     level                  = "ERROR"
   }

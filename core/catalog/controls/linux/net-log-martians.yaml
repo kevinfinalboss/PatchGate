@@ -1,0 +1,18 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: net-log-martians
+  description: Suspicious packets are logged
+  references:
+    cis: 3.3.4
+spec:
+  platform: linux
+  level: cis-level1
+  check: '[ "$(sysctl -n net.ipv4.conf.all.log_martians)" = "1" ] && [ "$(sysctl -n net.ipv4.conf.default.log_martians)" = "1" ]'
+  remediate: |
+    cat > /etc/sysctl.d/60-patchgate-net-log-martians.conf <<'EOF'
+    net.ipv4.conf.all.log_martians = 1
+    net.ipv4.conf.default.log_martians = 1
+    EOF
+    sysctl -qw net.ipv4.conf.all.log_martians=1
+    sysctl -qw net.ipv4.conf.default.log_martians=1

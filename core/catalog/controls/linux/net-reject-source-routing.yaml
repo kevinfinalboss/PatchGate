@@ -1,0 +1,18 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: net-reject-source-routing
+  description: Source routed packets are not accepted
+  references:
+    cis: 3.3.1
+spec:
+  platform: linux
+  level: baseline
+  check: '[ "$(sysctl -n net.ipv4.conf.all.accept_source_route)" = "0" ] && [ "$(sysctl -n net.ipv4.conf.default.accept_source_route)" = "0" ]'
+  remediate: |
+    cat > /etc/sysctl.d/60-patchgate-net-reject-source-routing.conf <<'EOF'
+    net.ipv4.conf.all.accept_source_route = 0
+    net.ipv4.conf.default.accept_source_route = 0
+    EOF
+    sysctl -qw net.ipv4.conf.all.accept_source_route=0
+    sysctl -qw net.ipv4.conf.default.accept_source_route=0

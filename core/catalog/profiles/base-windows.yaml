@@ -8,5 +8,10 @@ spec:
   agents: [cloudwatch-agent, microsoft-defender]
   chocolatey:
     - name: 7zip
-  hardening: none
   ring: 0
+  hardening:
+    engine: controls
+    level: baseline
+  drift:
+    interval: 30m
+    mode: enforce

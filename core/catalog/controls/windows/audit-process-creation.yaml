@@ -1,0 +1,14 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: audit-process-creation
+  description: Process creation is audited
+  references:
+    cis: 17.3.2
+spec:
+  platform: windows
+  level: cis-level1
+  check: $row = auditpol /get /subcategory:'{0CCE922B-69AE-11D9-BED3-505054503030}' /r | ConvertFrom-Csv; if ($row.'Inclusion Setting' -eq 'Success') { exit 0 } else { exit 1 }
+  remediate: |
+    auditpol /set /subcategory:'{0CCE922B-69AE-11D9-BED3-505054503030}' /success:enable /failure:disable | Out-Null
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

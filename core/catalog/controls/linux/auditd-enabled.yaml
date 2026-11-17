@@ -1,0 +1,15 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: auditd-enabled
+  description: auditd is installed and running
+  references:
+    cis: 4.1.1.1
+spec:
+  platform: linux
+  level: cis-level1
+  check: command -v auditctl >/dev/null && systemctl is-active --quiet auditd
+  remediate: |
+    if command -v dnf >/dev/null; then dnf install -y -q audit; elif command -v apt-get >/dev/null; then DEBIAN_FRONTEND=noninteractive apt-get install -y -q auditd; fi
+    systemctl enable auditd
+    systemctl start auditd

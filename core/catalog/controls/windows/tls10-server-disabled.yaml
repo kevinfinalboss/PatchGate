@@ -1,0 +1,15 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: tls10-server-disabled
+  description: TLS 1.0 is disabled for the server
+  references:
+    cis: 18.4.1
+spec:
+  platform: windows
+  level: baseline
+  check: if ((Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server' -Name 'Enabled' -ErrorAction SilentlyContinue).'Enabled' -eq 0) { exit 0
+    } else { exit 1 }
+  remediate: |
+    if (-not (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server')) { New-Item -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server' -Force | Out-Null }
+    Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server' -Name 'Enabled' -Value 0 -Type DWord

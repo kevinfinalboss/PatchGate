@@ -1,0 +1,13 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: smb-signing-required
+  description: SMB server requires packet signing
+  references:
+    cis: 2.3.9.2
+spec:
+  platform: windows
+  level: cis-level1
+  check: if ((Get-SmbServerConfiguration).RequireSecuritySignature) { exit 0 } else { exit 1 }
+  remediate: |
+    Set-SmbServerConfiguration -RequireSecuritySignature $true -Force

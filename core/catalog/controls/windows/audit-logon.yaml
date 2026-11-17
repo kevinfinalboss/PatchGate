@@ -1,0 +1,14 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: audit-logon
+  description: Logon events are audited (success and failure)
+  references:
+    cis: 17.5.3
+spec:
+  platform: windows
+  level: cis-level1
+  check: $row = auditpol /get /subcategory:'{0CCE9215-69AE-11D9-BED3-505054503030}' /r | ConvertFrom-Csv; if ($row.'Inclusion Setting' -eq 'Success and Failure') { exit 0 } else { exit 1 }
+  remediate: |
+    auditpol /set /subcategory:'{0CCE9215-69AE-11D9-BED3-505054503030}' /success:enable /failure:enable | Out-Null
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

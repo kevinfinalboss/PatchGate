@@ -40,10 +40,20 @@ Each phase ends with: working code, updated docs, an ADR for its main decision a
 
 ## Phase 3 — Hardening and drift
 
-- [ ] CIS level 1/2 for Linux (Ansible) and Windows (DSC), selected by profile
-- [ ] State Manager associations for periodic re-application
-- [ ] Drift events and notifications
-- [ ] Demo: change a hardened setting → it is reverted automatically
+### 3a — Native controls engine ⏳
+- [x] `Control` catalog kind; levels `baseline` / `cis-level1`; per-profile exclusions (ADR 0007)
+- [x] 17 Linux and 15 Windows controls with CIS references
+- [x] Controls executed by both installers with per-control evidence (`compliance.json`)
+- [x] Drift: State Manager association every 30 min, per-profile interval (30m–24h/off), enforce or audit mode
+- [x] Drift findings published as `io.patchgate` events → hub → email
+- [ ] Verified in the lab (Linux and Windows)
+
+### 3b — Ansible engine (Linux)
+- [ ] `engine: ansible` with pinned ansible-lockdown roles; results mapped to the same evidence format
+- [ ] Spoke template delivered via S3 (inline CloudFormation limit)
+
+### 3c — DSC engine (Windows)
+- [ ] `engine: dsc` with baseline configurations; same evidence format
 
 ## Phase 4 — Patching with approval
 

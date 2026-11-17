@@ -1,0 +1,14 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: remote-registry-disabled
+  description: The Remote Registry service is disabled
+  references:
+    cis: '5.27'
+spec:
+  platform: windows
+  level: cis-level1
+  check: $s = Get-Service RemoteRegistry -ErrorAction SilentlyContinue; if (-not $s -or $s.StartType -eq 'Disabled') { exit 0 } else { exit 1 }
+  remediate: |
+    Stop-Service RemoteRegistry -Force -ErrorAction SilentlyContinue
+    Set-Service RemoteRegistry -StartupType Disabled

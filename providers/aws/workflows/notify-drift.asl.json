@@ -1,0 +1,16 @@
+{
+  "Comment": "Patchgate: email a summary of drift findings published by a managed instance.",
+  "StartAt": "Notify",
+  "States": {
+    "Notify": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${topic_arn}",
+        "Subject": "[Patchgate] Drift detected",
+        "Message.$": "States.Format('Drift detected on instance {} in account {} (profile {}, mode {}).\n\nFindings: {}\n\nDetected at {}. remediated = corrected automatically; non-compliant = audit mode, not corrected; failed = needs attention.', $.detail.instanceId, $.account, $.detail.profile, $.detail.mode, States.JsonToString($.detail.findings), $.detail.detectedAt)"
+      },
+      "End": true
+    }
+  }
+}

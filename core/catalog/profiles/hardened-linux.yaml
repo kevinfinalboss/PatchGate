@@ -1,0 +1,15 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Profile
+metadata:
+  name: hardened-linux
+  description: Linux server hardened to the CIS Level 1 subset of the controls engine.
+spec:
+  platform: linux
+  agents: [cloudwatch-agent, clamav]
+  hardening:
+    engine: controls
+    level: cis-level1
+  drift:
+    interval: 30m
+    mode: enforce
+  ring: 0

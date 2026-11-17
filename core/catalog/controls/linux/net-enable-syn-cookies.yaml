@@ -1,0 +1,16 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Control
+metadata:
+  name: net-enable-syn-cookies
+  description: TCP SYN cookies are enabled
+  references:
+    cis: 3.3.8
+spec:
+  platform: linux
+  level: baseline
+  check: '[ "$(sysctl -n net.ipv4.tcp_syncookies)" = "1" ]'
+  remediate: |
+    cat > /etc/sysctl.d/60-patchgate-net-enable-syn-cookies.conf <<'EOF'
+    net.ipv4.tcp_syncookies = 1
+    EOF
+    sysctl -qw net.ipv4.tcp_syncookies=1

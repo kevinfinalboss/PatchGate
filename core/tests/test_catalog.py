@@ -151,3 +151,81 @@ def test_windows_scripts_do_not_write_utf8_with_bom() -> None:
             if "-Encoding UTF8" in windows.get(field, ""):
                 offenders.append(f"{name}.{field}")
     assert offenders == [], "use [IO.File]::WriteAllText(path, text, UTF8Encoding($false))"
+
+
+# ---------------------------------------------------------------- controls
+
+
+def ctrl(name: str, platform: str = "linux", level: str = "baseline") -> dict[str, Any]:
+    return {
+        "apiVersion": "patchgate.io/v1alpha1",
+        "kind": "Control",
+        "metadata": {"name": name, "description": "d"},
+        "spec": {"platform": platform, "level": level, "check": "true", "remediate": "true"},
+    }
+
+
+def write_controls(root: Path, *docs: dict[str, Any]) -> None:
+    folder = root / "controls"
+    folder.mkdir(parents=True, exist_ok=True)
+    for doc in docs:
+        (folder / f"{doc['metadata']['name']}.yaml").write_text(yaml.safe_dump(doc))
+
+
+def test_levels_are_cumulative_and_platform_scoped(tmp_path: Path) -> None:
+    write_catalog(
+        tmp_path,
+        profile("base", hardening={"engine": "controls", "level": "baseline"}),
+        profile("strict", hardening={"engine": "controls", "level": "cis-level1"}),
+    )
+    write_controls(
+        tmp_path,
+        ctrl("b1"),
+        ctrl("c1", level="cis-level1"),
+        ctrl("w1", platform="windows"),
+    )
+    catalog = Catalog.load(tmp_path)
+
+    def names(p: str) -> list[str]:
+        return [c["name"] for c in catalog.compile(p)["hardening"]["controls"]]
+
+    assert names("base") == ["b1"]
+    assert names("strict") == ["b1", "c1"]
+
+
+def test_excluded_controls_are_skipped_and_validated(tmp_path: Path) -> None:
+    write_controls(tmp_path, ctrl("b1"), ctrl("b2"))
+    write_catalog(tmp_path, profile("p", hardening={"engine": "controls", "exclude": ["b2"]}))
+    plan = Catalog.load(tmp_path).compile("p")
+    assert [c["name"] for c in plan["hardening"]["controls"]] == ["b1"]
+
+    write_catalog(tmp_path, profile("p", hardening={"engine": "controls", "exclude": ["nope"]}))
+    with pytest.raises(CatalogError, match="unknown control 'nope'"):
+        Catalog.load(tmp_path)
+
+
+def test_exclude_must_match_platform(tmp_path: Path) -> None:
+    write_controls(tmp_path, ctrl("w1", platform="windows"))
+    write_catalog(tmp_path, profile("p", hardening={"engine": "controls", "exclude": ["w1"]}))
+    with pytest.raises(CatalogError, match="not for linux"):
+        Catalog.load(tmp_path)
+
+
+def test_drift_defaults_and_no_hardening(tmp_path: Path) -> None:
+    write_catalog(tmp_path, profile("p"))
+    plan = Catalog.load(tmp_path).compile("p")
+    assert plan["hardening"] is None
+    assert plan["drift"] == {"interval": "30m", "mode": "enforce"}
+
+
+def test_drift_interval_must_be_supported() -> None:
+    doc = profile("p", drift={"interval": "45m"})
+    assert validate_document(doc)
+
+
+def test_every_real_control_has_cis_reference_and_fits_in_plans() -> None:
+    catalog = Catalog.load(REAL_CATALOG)
+    assert len(catalog.controls) >= 30
+    assert all(c["metadata"].get("references", {}).get("cis") for c in catalog.controls.values())
+    for plan in catalog.compile_all().values():
+        encode_plan(plan)  # raises if a profile outgrows the transport limit
