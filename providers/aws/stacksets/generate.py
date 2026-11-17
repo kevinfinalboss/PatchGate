@@ -90,7 +90,8 @@ def windows_document(installer: str) -> dict[str, Any]:
 
 
 DRIFT_DOCUMENT = "Patchgate-Drift"
-DRIFT_SCHEDULE = "cron(0/30 * * * ? *)"  # the executor skips runs until the profile's interval is due
+# Every 30 minutes; the executor skips runs until the profile's interval is due.
+DRIFT_SCHEDULE = "cron(0/30 * * * ? *)"
 DRIFT_SOURCE = "io.patchgate"
 DRIFT_DETAIL_TYPE = "Patchgate Drift Detected"
 
