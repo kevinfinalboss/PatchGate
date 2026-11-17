@@ -60,12 +60,27 @@ Each phase ends with: working code, updated docs, an ADR for its main decision a
 - [x] Safe .nupkg extraction, LCM in ApplyOnly (Patchgate drives drift), per-CIS-rule evidence from Test-DscConfiguration before/after, reboot signalling
 - [x] Verified in the lab: CIS Windows Server 2022 L1 applied in ~2.5 min; re-run reports 293/293 rules compliant. Found and fixed on real Windows: rules the module cannot skip, WinRM MaxEnvelopeSize for large MOFs, CIS 2.3.1.1 (disable the only admin) excluded on EC2
 
-## Phase 4 — Patching with approval
+## Phase 4 — Change management: apps, rollouts and OS patching
 
-- [ ] Patch baselines per OS and patch policy schema (rings, windows, approvers)
-- [ ] Patch workflow: scan → ring 0 → soak → email approval → ring 1
+Application updates, hardening changes and OS patches are the same problem: changes rolled out in
+waves with approval. Phase 4 builds that once and reuses it for everything.
+
+### 4a — Application lifecycle ⏭️
+- [ ] `AppSet` catalog kind: reusable bundles of apps (Chocolatey on Windows, dnf/apt on Linux)
+- [ ] Instances compose a profile with app sets via the `Patchgate:AppSets` tag; profiles allow-list which sets they accept
+- [ ] `ensure: present | latest | absent`, pinned versions, `prune` (removes only what Patchgate installed)
+- [ ] Drift reconciles apps: reinstall, fix versions, uninstall
+- [ ] Tag changes on running instances trigger re-planning (no restart needed)
+
+### 4b — Rollouts with rings and approval
+- [ ] Catalog changes (apps, hardening) applied to running instances ring by ring
+- [ ] Email approval gate (Step Functions `waitForTaskToken` + API Gateway signed links)
+- [ ] Health checks between rings; stop on failure
+
+### 4c — OS patching
+- [ ] Patch baselines per OS and patch policy schema (rings, maintenance windows, approvers)
+- [ ] Patch Manager scan/install driven by the 4b rollout engine
 - [ ] Pre-patch snapshot, post-patch health checks, automatic rollback
-- [ ] Chocolatey application updates in the same flow
 - [ ] Demo: full approval flow end to end, including a forced rollback
 
 ## Phase 5 — Golden images
