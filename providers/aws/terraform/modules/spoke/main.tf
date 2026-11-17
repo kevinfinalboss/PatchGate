@@ -152,7 +152,8 @@ locals {
     Plan = {
       type           = "String"
       description    = "Install plan produced by the Patchgate catalog (gz1:<base64>)."
-      allowedPattern = "^(gz1:)?[A-Za-z0-9+/=]{1,4000}$"
+      allowedPattern = "^(gz1:)?[A-Za-z0-9+/=]+$"
+      maxChars       = 4000
     }
   }
 
