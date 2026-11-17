@@ -39,7 +39,8 @@ Before editing files under these folders, read their own AGENTS.md (closest file
 | IaC security scan | `checkov -d providers/aws` |
 | Catalog validation | `make validate-catalog` (JSON Schema against `core/catalog/**`) |
 | PowerShell lint | `Invoke-ScriptAnalyzer -Recurse core/scripts/windows` |
-| Shell lint | `shellcheck core/scripts/linux/*.sh` |
+| Catalog CLI | `python -m patchgate validate` / `python -m patchgate compile <profile>` |
+| Windows installer tests | need `pwsh`; set `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1` if libicu is missing |
 
 ## Stack and conventions
 

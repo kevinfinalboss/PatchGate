@@ -27,13 +27,26 @@ jobs:
       - run: ruff format --check .
       - name: mypy
         run: |
-          paths=$(for p in core/lib core/tests providers/aws/functions; do find "$p" -name '*.py' -print -quit | grep -q . && echo "$p" || true; done)
+          paths=$(for p in core/lib core/tests core/scripts/linux providers/aws/functions; do find "$p" -name '*.py' -print -quit | grep -q . && echo "$p" || true; done)
           if [ -n "$paths" ]; then mypy $paths; fi
       - name: core/ must not import cloud SDKs
         run: "! grep -rnE '^\\s*(import|from)\\s+(boto3|botocore|azure)' core --include='*.py'"
       - name: Validate catalog
         run: python -m patchgate validate
       - run: pytest
+
+  powershell:
+    name: PowerShell (PSScriptAnalyzer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Analyze Windows scripts
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          $issues = Invoke-ScriptAnalyzer -Path core/scripts/windows -Recurse -Severity Warning,Error
+          $issues | Format-Table -AutoSize
+          if ($issues) { exit 1 }
 
   terraform:
     name: Terraform (fmt, validate, lint)

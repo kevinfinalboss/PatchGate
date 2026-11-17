@@ -4,7 +4,7 @@ SHELL := /bin/bash
 VENV        ?= .venv
 PY          := $(VENV)/bin/python
 TF_DIRS     := $(shell find providers -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; | sort -u)
-PY_PATHS    := core/lib core/tests providers/aws/functions
+PY_PATHS    := core/lib core/tests core/scripts/linux providers/aws/functions
 SH_SCRIPTS  := $(shell find core/scripts -name '*.sh' 2>/dev/null)
 
 .PHONY: help
