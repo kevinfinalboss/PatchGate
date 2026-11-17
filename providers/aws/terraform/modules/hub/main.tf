@@ -20,12 +20,10 @@ terraform {
 
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
-data "aws_region" "current" {}
 
 locals {
   account_id = data.aws_caller_identity.current.account_id
   partition  = data.aws_partition.current.partition
-  region     = data.aws_region.current.region
   repo_root  = "${path.module}/../../../../.."
 
   # Patchgate-Execution in each registered spoke account (explicit list = least privilege).

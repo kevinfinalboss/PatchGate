@@ -1,3 +1,9 @@
+variable "availability_zone" {
+  description = "Availability zone for the lab subnet (pinned so the lab is reproducible)."
+  type        = string
+  default     = "us-east-2a"
+}
+
 variable "instance_profile_name" {
   description = "Instance profile created by the spoke module."
   type        = string

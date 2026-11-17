@@ -7,6 +7,7 @@ TF_DIRS     := $(shell find providers -name '*.tf' -not -path '*/.terraform/*' -
 SH_SCRIPTS  := $(shell find core/scripts providers/aws/scripts -name '*.sh' 2>/dev/null)
 LIVE        := providers/aws/terraform/live
 ACCOUNT     ?= dev
+CHECKOV_VERSION := 3.4.5
 
 .PHONY: help
 help: ## Show this help
@@ -51,8 +52,12 @@ validate: ## terraform validate every root/module (no backend)
 	done
 
 .PHONY: security
-security: ## IaC security scan
-	$(VENV)/bin/checkov -d providers --config-file .checkov.yaml
+security: ## IaC security scan (same checkov version as CI)
+	@if command -v docker >/dev/null; then \
+	  docker run --rm -v "$$PWD:/tf" -w /tf bridgecrew/checkov:$(CHECKOV_VERSION) -d . --config-file .checkov.yaml; \
+	else \
+	  $(VENV)/bin/checkov -d . --config-file .checkov.yaml; \
+	fi
 
 .PHONY: boundaries
 boundaries: ## Ensure core/ never imports cloud SDKs

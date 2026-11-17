@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - AWS provider: hub (event bus, bootstrap workflow, resolver Lambda, notifications), spoke (execution role, event forwarding, SSM documents) and an ephemeral lab with a TTL reaper.
 - AWS foundation: organization units, member accounts, budgets with an SCP kill switch, organization CloudTrail.
 
+### Fixed
+
+- Windows: CloudWatch agent config written without BOM; installer logging no longer fails when a log shipper holds the file open (both found in the first lab run).
+
+### Project setup
+
 - Project structure split into cloud-agnostic `core/` and `providers/`.
 - Architecture, roadmap, provider contract and threat model documentation.
 - ADRs 0001–0005 covering core/providers split, multi-account model, orchestration, bootstrap and the agent catalog.

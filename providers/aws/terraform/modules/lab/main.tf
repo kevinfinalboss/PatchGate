@@ -17,10 +17,6 @@ terraform {
   }
 }
 
-data "aws_availability_zones" "available" {
-  state = "available"
-}
-
 locals {
   repo_root = "${path.module}/../../../../.."
   lab_tags = {
@@ -51,7 +47,7 @@ resource "aws_internet_gateway" "lab" {
 resource "aws_subnet" "public" {
   vpc_id            = aws_vpc.lab.id
   cidr_block        = "10.70.1.0/24"
-  availability_zone = data.aws_availability_zones.available.names[0]
+  availability_zone = var.availability_zone
   tags              = { Name = "patchgate-lab-public" }
 }
 
