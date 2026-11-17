@@ -24,3 +24,5 @@ skip-check:
   - CKV_AWS_158  # CloudWatch log group CMK: SSE by default; avoids per-key cost
   - CKV_AWS_338  # Log retention >= 1 year: lab logs kept 7-14 days to minimise cost
   - CKV_AWS_50   # Lambda X-Ray tracing: not needed at lab scale
+  - CKV_AWS_119  # DynamoDB CMK: AWS-owned/managed encryption; avoids per-key cost at lab scale
+  - CKV2_AWS_16  # DynamoDB auto scaling: on-demand (pay-per-request) tables scale automatically

@@ -65,9 +65,13 @@ boundaries: ## Ensure core/ never imports cloud SDKs
 	@echo "core/ boundary OK"
 
 
-.PHONY: plans
-plans: ## Compile the catalog into the resolver Lambda bundle (commit the result)
-	$(PY) -m patchgate compile-all --encoded --out providers/aws/functions/resolver/plans.json
+.PHONY: seed
+seed: ## Export the built-in catalog seeded into the configuration table (commit the result)
+	$(PY) -m patchgate export --out providers/aws/config/seed.json
+
+.PHONY: layer
+layer: ## Build the patchgate-core Lambda layer (hash-pinned dependencies)
+	providers/aws/functions/layer/build.sh
 
 .PHONY: spoke-artifacts
 spoke-artifacts: ## Regenerate SSM documents and the StackSet template from core/ (commit the result)
@@ -88,7 +92,7 @@ check: lint typecheck boundaries validate-catalog generated test validate securi
 # Applies always show a plan and ask for confirmation (no -auto-approve).
 
 .PHONY: hub
-hub: ## Deploy the hub (control plane)
+hub: layer ## Deploy the hub (control plane)
 	terraform -chdir=$(LIVE)/hub init -backend-config=backend.hcl -input=false >/dev/null
 	terraform -chdir=$(LIVE)/hub apply
 

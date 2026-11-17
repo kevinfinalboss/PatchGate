@@ -32,3 +32,9 @@ variable "log_retention_days" {
   type        = number
   default     = 14
 }
+
+variable "protect_config" {
+  description = "Enable deletion protection on the configuration and history tables."
+  type        = bool
+  default     = true
+}

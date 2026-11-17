@@ -1,0 +1,237 @@
+[
+ {
+  "kind": "Agent",
+  "name": "clamav",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Agent\", \"metadata\": {\"description\": \"ClamAV open-source antivirus with signature updates and a daily scan timer.\", \"name\": \"clamav\"}, \"spec\": {\"install\": {\"linux\": {\"method\": \"package\", \"packages\": {\"apt\": [\"clamav\", \"clamav-freshclam\"], \"dnf\": [\"clamav\", \"clamav-update\"]}, \"postInstall\": \"if [ -f /etc/freshclam.conf ]; then sed -i '/^Example/d' /etc/freshclam.conf; fi\\nfreshclam --quiet || echo \\\"freshclam failed (rate limit?); signatures will update on next run\\\"\\ninstall -d -m 0755 /var/log/patchgate\\ncat > /etc/systemd/system/patchgate-clamscan.service <<'UNIT'\\n[Unit]\\nDescription=Patchgate daily ClamAV scan\\n[Service]\\nType=oneshot\\nNice=19\\nIOSchedulingClass=idle\\nExecStart=/bin/sh -c 'freshclam --quiet || true; clamscan -r -i --exclude-dir=^/proc --exclude-dir=^/sys --exclude-dir=^/dev /home /tmp /var /opt >> /var/log/patchgate/clamscan.log 2>&1 || true'\\nUNIT\\ncat > /etc/systemd/system/patchgate-clamscan.timer <<'UNIT'\\n[Unit]\\nDescription=Run Patchgate ClamAV scan daily\\n[Timer]\\nOnCalendar=daily\\nRandomizedDelaySec=1h\\nPersistent=true\\n[Install]\\nWantedBy=timers.target\\nUNIT\\nsystemctl daemon-reload\\nsystemctl enable --now patchgate-clamscan.timer\\n\"}}, \"validate\": {\"linux\": \"command -v clamscan >/dev/null && systemctl is-enabled --quiet patchgate-clamscan.timer\"}}}"
+ },
+ {
+  "kind": "Agent",
+  "name": "cloudwatch-agent",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Agent\", \"metadata\": {\"description\": \"Amazon CloudWatch Agent shipping memory/disk metrics and Patchgate logs.\", \"name\": \"cloudwatch-agent\"}, \"spec\": {\"install\": {\"linux\": {\"method\": \"package\", \"packages\": {\"dnf\": [\"amazon-cloudwatch-agent\"]}, \"postInstall\": \"install -d -m 0755 /opt/aws/amazon-cloudwatch-agent/etc /var/log/patchgate\\ncat > /opt/aws/amazon-cloudwatch-agent/etc/patchgate.json <<'JSON'\\n{\\n  \\\"agent\\\": { \\\"metrics_collection_interval\\\": 60 },\\n  \\\"metrics\\\": {\\n    \\\"namespace\\\": \\\"Patchgate\\\",\\n    \\\"append_dimensions\\\": { \\\"InstanceId\\\": \\\"${aws:InstanceId}\\\" },\\n    \\\"metrics_collected\\\": {\\n      \\\"mem\\\": { \\\"measurement\\\": [\\\"mem_used_percent\\\"] },\\n      \\\"disk\\\": { \\\"measurement\\\": [\\\"used_percent\\\"], \\\"resources\\\": [\\\"/\\\"] }\\n    }\\n  },\\n  \\\"logs\\\": {\\n    \\\"logs_collected\\\": {\\n      \\\"files\\\": {\\n        \\\"collect_list\\\": [\\n          { \\\"file_path\\\": \\\"/var/log/patchgate/*.log\\\", \\\"log_group_name\\\": \\\"/patchgate/instances\\\", \\\"log_stream_name\\\": \\\"{instance_id}/patchgate\\\" }\\n        ]\\n      }\\n    }\\n  }\\n}\\nJSON\\n/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s \\\\\\n  -c file:/opt/aws/amazon-cloudwatch-agent/etc/patchgate.json\\n\"}, \"windows\": {\"method\": \"msi\", \"postInstall\": \"$dir = \\\"$env:ProgramData\\\\Amazon\\\\AmazonCloudWatchAgent\\\"\\nNew-Item -ItemType Directory -Force -Path $dir, \\\"$env:ProgramData\\\\Patchgate\\\\logs\\\" | Out-Null\\n$config = @'\\n{\\n  \\\"metrics\\\": {\\n    \\\"namespace\\\": \\\"Patchgate\\\",\\n    \\\"append_dimensions\\\": { \\\"InstanceId\\\": \\\"${aws:InstanceId}\\\" },\\n    \\\"metrics_collected\\\": {\\n      \\\"Memory\\\": { \\\"measurement\\\": [\\\"% Committed Bytes In Use\\\"] },\\n      \\\"LogicalDisk\\\": { \\\"measurement\\\": [\\\"% Free Space\\\"], \\\"resources\\\": [\\\"C:\\\"] }\\n    }\\n  },\\n  \\\"logs\\\": {\\n    \\\"logs_collected\\\": {\\n      \\\"files\\\": {\\n        \\\"collect_list\\\": [\\n          { \\\"file_path\\\": \\\"C:\\\\\\\\ProgramData\\\\\\\\Patchgate\\\\\\\\logs\\\\\\\\*.log\\\", \\\"log_group_name\\\": \\\"/patchgate/instances\\\", \\\"log_stream_name\\\": \\\"{instance_id}/patchgate\\\" }\\n        ]\\n      }\\n    }\\n  }\\n}\\n'@\\n# Write UTF-8 without BOM: Windows PowerShell 5.1 Set-Content adds one and the agent rejects it.\\n[IO.File]::WriteAllText(\\\"$dir\\\\patchgate.json\\\", $config, (New-Object Text.UTF8Encoding $false))\\n& \\\"$env:ProgramFiles\\\\Amazon\\\\AmazonCloudWatchAgent\\\\amazon-cloudwatch-agent-ctl.ps1\\\" -a fetch-config -m ec2 -s -c \\\"file:$dir\\\\patchgate.json\\\"\\n\", \"sha256\": \"3891c26f477cc47cf1b3965b18ffb25532b67e4534b60f692cb6605b6bee1577\", \"source\": \"https://amazoncloudwatch-agent.s3.amazonaws.com/windows/amd64/1.300074.1b2005/amazon-cloudwatch-agent.msi\"}}, \"validate\": {\"linux\": \"systemctl is-active --quiet amazon-cloudwatch-agent\", \"windows\": \"if ((Get-Service AmazonCloudWatchAgent).Status -ne 'Running') { exit 1 }\"}}}"
+ },
+ {
+  "kind": "Agent",
+  "name": "microsoft-defender",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Agent\", \"metadata\": {\"description\": \"Built-in Microsoft Defender Antivirus, configured with real-time, cloud and PUA protection.\", \"name\": \"microsoft-defender\"}, \"spec\": {\"install\": {\"windows\": {\"method\": \"script\", \"script\": \"if ((Get-WindowsFeature -Name Windows-Defender).InstallState -ne 'Installed') {\\n  Install-WindowsFeature -Name Windows-Defender | Out-Null\\n  exit 3010  # reboot required; SSM reboots and re-runs the step\\n}\\nSet-MpPreference -DisableRealtimeMonitoring $false -DisableBehaviorMonitoring $false `\\n  -DisableIOAVProtection $false -PUAProtection Enabled -MAPSReporting Advanced `\\n  -SubmitSamplesConsent SendSafeSamples -ScanScheduleDay Everyday\\nUpdate-MpSignature -ErrorAction Continue\\n\"}}, \"validate\": {\"windows\": \"if (-not (Get-MpComputerStatus).RealTimeProtectionEnabled) { exit 1 }\"}}}"
+ },
+ {
+  "kind": "Profile",
+  "name": "base-linux",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Profile\", \"metadata\": {\"description\": \"Minimum baseline for any Linux server.\", \"name\": \"base-linux\"}, \"spec\": {\"agents\": [\"cloudwatch-agent\", \"clamav\"], \"allowedAppSets\": [\"devtools\"], \"drift\": {\"interval\": \"30m\", \"mode\": \"enforce\"}, \"hardening\": {\"engine\": \"controls\", \"level\": \"baseline\"}, \"platform\": \"linux\", \"ring\": 0}}"
+ },
+ {
+  "kind": "Profile",
+  "name": "base-windows",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Profile\", \"metadata\": {\"description\": \"Minimum baseline for any Windows server.\", \"name\": \"base-windows\"}, \"spec\": {\"agents\": [\"cloudwatch-agent\", \"microsoft-defender\"], \"apps\": [{\"name\": \"7zip\"}], \"drift\": {\"interval\": \"30m\", \"mode\": \"enforce\"}, \"hardening\": {\"engine\": \"controls\", \"level\": \"baseline\"}, \"platform\": \"windows\", \"ring\": 0}}"
+ },
+ {
+  "kind": "Profile",
+  "name": "cis-linux",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Profile\", \"metadata\": {\"description\": \"Amazon Linux 2023 hardened with the full CIS Level 1 benchmark (ansible engine).\", \"name\": \"cis-linux\"}, \"spec\": {\"agents\": [\"cloudwatch-agent\", \"clamav\"], \"drift\": {\"interval\": \"6h\", \"mode\": \"enforce\"}, \"hardening\": {\"baseline\": \"amazon2023-cis-level1\", \"engine\": \"ansible\"}, \"platform\": \"linux\", \"ring\": 0}}"
+ },
+ {
+  "kind": "Profile",
+  "name": "cis-windows",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Profile\", \"metadata\": {\"description\": \"Windows Server 2022 hardened with the full CIS Level 1 benchmark (dsc engine).\", \"name\": \"cis-windows\"}, \"spec\": {\"agents\": [\"cloudwatch-agent\", \"microsoft-defender\"], \"drift\": {\"interval\": \"6h\", \"mode\": \"enforce\"}, \"hardening\": {\"baseline\": \"windows2022-cis-level1\", \"engine\": \"dsc\"}, \"platform\": \"windows\", \"ring\": 0}}"
+ },
+ {
+  "kind": "Profile",
+  "name": "hardened-linux",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Profile\", \"metadata\": {\"description\": \"Linux server hardened to the CIS Level 1 subset of the controls engine.\", \"name\": \"hardened-linux\"}, \"spec\": {\"agents\": [\"cloudwatch-agent\", \"clamav\"], \"drift\": {\"interval\": \"30m\", \"mode\": \"enforce\"}, \"hardening\": {\"engine\": \"controls\", \"level\": \"cis-level1\"}, \"platform\": \"linux\", \"ring\": 0}}"
+ },
+ {
+  "kind": "Profile",
+  "name": "hardened-windows",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Profile\", \"metadata\": {\"description\": \"Windows server hardened to the CIS Level 1 subset of the controls engine.\", \"name\": \"hardened-windows\"}, \"spec\": {\"agents\": [\"cloudwatch-agent\", \"microsoft-defender\"], \"apps\": [{\"name\": \"7zip\"}], \"drift\": {\"interval\": \"30m\", \"mode\": \"enforce\"}, \"hardening\": {\"engine\": \"controls\", \"level\": \"cis-level1\"}, \"platform\": \"windows\", \"ring\": 0}}"
+ },
+ {
+  "kind": "Profile",
+  "name": "web-windows",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Profile\", \"metadata\": {\"description\": \"Windows web server with admin tooling.\", \"name\": \"web-windows\"}, \"spec\": {\"agents\": [\"cloudwatch-agent\", \"microsoft-defender\"], \"allowedAppSets\": [\"dotnet8\", \"nodejs-lts\"], \"apps\": [{\"name\": \"7zip\"}, {\"name\": \"notepadplusplus\"}], \"drift\": {\"interval\": \"30m\", \"mode\": \"enforce\"}, \"hardening\": {\"engine\": \"controls\", \"level\": \"baseline\"}, \"platform\": \"windows\", \"ring\": 1}}"
+ },
+ {
+  "kind": "Control",
+  "name": "audit-logon",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"Logon events are audited (success and failure)\", \"name\": \"audit-logon\", \"references\": {\"cis\": \"17.5.3\"}}, \"spec\": {\"check\": \"$row = auditpol /get /subcategory:'{0CCE9215-69AE-11D9-BED3-505054503030}' /r | ConvertFrom-Csv; if ($row.'Inclusion Setting' -eq 'Success and Failure') { exit 0 } else { exit 1 }\", \"level\": \"cis-level1\", \"platform\": \"windows\", \"remediate\": \"auditpol /set /subcategory:'{0CCE9215-69AE-11D9-BED3-505054503030}' /success:enable /failure:enable | Out-Null\\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "audit-process-creation",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"Process creation is audited\", \"name\": \"audit-process-creation\", \"references\": {\"cis\": \"17.3.2\"}}, \"spec\": {\"check\": \"$row = auditpol /get /subcategory:'{0CCE922B-69AE-11D9-BED3-505054503030}' /r | ConvertFrom-Csv; if ($row.'Inclusion Setting' -eq 'Success') { exit 0 } else { exit 1 }\", \"level\": \"cis-level1\", \"platform\": \"windows\", \"remediate\": \"auditpol /set /subcategory:'{0CCE922B-69AE-11D9-BED3-505054503030}' /success:enable /failure:disable | Out-Null\\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "auditd-enabled",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"auditd is installed and running\", \"name\": \"auditd-enabled\", \"references\": {\"cis\": \"4.1.1.1\"}}, \"spec\": {\"check\": \"command -v auditctl >/dev/null && systemctl is-active --quiet auditd\", \"level\": \"cis-level1\", \"platform\": \"linux\", \"remediate\": \"if command -v dnf >/dev/null; then dnf install -y -q audit; elif command -v apt-get >/dev/null; then DEBIAN_FRONTEND=noninteractive apt-get install -y -q auditd; fi\\nsystemctl enable auditd\\nsystemctl start auditd\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "autorun-disabled",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"AutoRun is disabled for all drives\", \"name\": \"autorun-disabled\", \"references\": {\"cis\": \"18.9.8.3\"}}, \"spec\": {\"check\": \"if ((Get-ItemProperty -Path 'HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\Explorer' -Name 'NoDriveTypeAutoRun' -ErrorAction SilentlyContinue).'NoDriveTypeAutoRun' -eq 255) { exit 0 } else { exit 1 }\", \"level\": \"cis-level1\", \"platform\": \"windows\", \"remediate\": \"if (-not (Test-Path 'HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\Explorer')) { New-Item -Path 'HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\Explorer' -Force | Out-Null }\\nSet-ItemProperty -Path 'HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\Explorer' -Name 'NoDriveTypeAutoRun' -Value 255 -Type DWord\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "disable-cramfs",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"The cramfs filesystem module cannot be loaded\", \"name\": \"disable-cramfs\", \"references\": {\"cis\": \"1.1.1.1\"}}, \"spec\": {\"check\": \"grep -qs '^install cramfs /bin/false' /etc/modprobe.d/patchgate-cramfs.conf && ! lsmod | grep -q '^cramfs '\", \"level\": \"cis-level1\", \"platform\": \"linux\", \"remediate\": \"echo 'install cramfs /bin/false' > /etc/modprobe.d/patchgate-cramfs.conf\\nmodprobe -r cramfs 2>/dev/null || true\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "firewall-enabled",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"Windows Firewall is enabled for all profiles\", \"name\": \"firewall-enabled\", \"references\": {\"cis\": \"9.1.1\"}}, \"spec\": {\"check\": \"if (Get-NetFirewallProfile | Where-Object { -not $_.Enabled }) { exit 1 } else { exit 0 }\", \"level\": \"baseline\", \"platform\": \"windows\", \"remediate\": \"Set-NetFirewallProfile -All -Enabled True\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "guest-account-disabled",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"The built-in Guest account is disabled\", \"name\": \"guest-account-disabled\", \"references\": {\"cis\": \"2.3.1.2\"}}, \"spec\": {\"check\": \"$g = Get-LocalUser | Where-Object { $_.SID -like '*-501' }; if ($g -and $g.Enabled) { exit 1 } else { exit 0 }\", \"level\": \"baseline\", \"platform\": \"windows\", \"remediate\": \"Get-LocalUser | Where-Object { $_.SID -like '*-501' } | Disable-LocalUser\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "kernel-enable-aslr",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"Address space layout randomization is enabled\", \"name\": \"kernel-enable-aslr\", \"references\": {\"cis\": \"1.5.3\"}}, \"spec\": {\"check\": \"[ \\\"$(sysctl -n kernel.randomize_va_space)\\\" = \\\"2\\\" ]\", \"level\": \"baseline\", \"platform\": \"linux\", \"remediate\": \"cat > /etc/sysctl.d/60-patchgate-kernel-enable-aslr.conf <<'EOF'\\nkernel.randomize_va_space = 2\\nEOF\\nsysctl -qw kernel.randomize_va_space=2\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "kernel-restrict-suid-dumps",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"Core dumps of setuid programs are disabled\", \"name\": \"kernel-restrict-suid-dumps\", \"references\": {\"cis\": \"1.5.1\"}}, \"spec\": {\"check\": \"[ \\\"$(sysctl -n fs.suid_dumpable)\\\" = \\\"0\\\" ]\", \"level\": \"cis-level1\", \"platform\": \"linux\", \"remediate\": \"cat > /etc/sysctl.d/60-patchgate-kernel-restrict-suid-dumps.conf <<'EOF'\\nfs.suid_dumpable = 0\\nEOF\\nsysctl -qw fs.suid_dumpable=0\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "llmnr-disabled",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"LLMNR multicast name resolution is disabled\", \"name\": \"llmnr-disabled\", \"references\": {\"cis\": \"18.6.4.4\"}}, \"spec\": {\"check\": \"if ((Get-ItemProperty -Path 'HKLM:\\\\SOFTWARE\\\\Policies\\\\Microsoft\\\\Windows NT\\\\DNSClient' -Name 'EnableMulticast' -ErrorAction SilentlyContinue).'EnableMulticast' -eq 0) { exit 0 } else { exit 1 }\", \"level\": \"baseline\", \"platform\": \"windows\", \"remediate\": \"if (-not (Test-Path 'HKLM:\\\\SOFTWARE\\\\Policies\\\\Microsoft\\\\Windows NT\\\\DNSClient')) { New-Item -Path 'HKLM:\\\\SOFTWARE\\\\Policies\\\\Microsoft\\\\Windows NT\\\\DNSClient' -Force | Out-Null }\\nSet-ItemProperty -Path 'HKLM:\\\\SOFTWARE\\\\Policies\\\\Microsoft\\\\Windows NT\\\\DNSClient' -Name 'EnableMulticast' -Value 0 -Type DWord\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "net-disable-ip-forwarding",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"IPv4 forwarding is disabled\", \"name\": \"net-disable-ip-forwarding\", \"references\": {\"cis\": \"3.2.1\"}}, \"spec\": {\"check\": \"[ \\\"$(sysctl -n net.ipv4.ip_forward)\\\" = \\\"0\\\" ]\", \"level\": \"baseline\", \"platform\": \"linux\", \"remediate\": \"cat > /etc/sysctl.d/60-patchgate-net-disable-ip-forwarding.conf <<'EOF'\\nnet.ipv4.ip_forward = 0\\nEOF\\nsysctl -qw net.ipv4.ip_forward=0\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "net-disable-send-redirects",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"ICMP redirects are not sent\", \"name\": \"net-disable-send-redirects\", \"references\": {\"cis\": \"3.2.2\"}}, \"spec\": {\"check\": \"[ \\\"$(sysctl -n net.ipv4.conf.all.send_redirects)\\\" = \\\"0\\\" ] && [ \\\"$(sysctl -n net.ipv4.conf.default.send_redirects)\\\" = \\\"0\\\" ]\", \"level\": \"baseline\", \"platform\": \"linux\", \"remediate\": \"cat > /etc/sysctl.d/60-patchgate-net-disable-send-redirects.conf <<'EOF'\\nnet.ipv4.conf.all.send_redirects = 0\\nnet.ipv4.conf.default.send_redirects = 0\\nEOF\\nsysctl -qw net.ipv4.conf.all.send_redirects=0\\nsysctl -qw net.ipv4.conf.default.send_redirects=0\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "net-enable-syn-cookies",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"TCP SYN cookies are enabled\", \"name\": \"net-enable-syn-cookies\", \"references\": {\"cis\": \"3.3.8\"}}, \"spec\": {\"check\": \"[ \\\"$(sysctl -n net.ipv4.tcp_syncookies)\\\" = \\\"1\\\" ]\", \"level\": \"baseline\", \"platform\": \"linux\", \"remediate\": \"cat > /etc/sysctl.d/60-patchgate-net-enable-syn-cookies.conf <<'EOF'\\nnet.ipv4.tcp_syncookies = 1\\nEOF\\nsysctl -qw net.ipv4.tcp_syncookies=1\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "net-ignore-icmp-redirects",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"ICMP redirects are not accepted\", \"name\": \"net-ignore-icmp-redirects\", \"references\": {\"cis\": \"3.3.2\"}}, \"spec\": {\"check\": \"[ \\\"$(sysctl -n net.ipv4.conf.all.accept_redirects)\\\" = \\\"0\\\" ] && [ \\\"$(sysctl -n net.ipv4.conf.default.accept_redirects)\\\" = \\\"0\\\" ]\", \"level\": \"baseline\", \"platform\": \"linux\", \"remediate\": \"cat > /etc/sysctl.d/60-patchgate-net-ignore-icmp-redirects.conf <<'EOF'\\nnet.ipv4.conf.all.accept_redirects = 0\\nnet.ipv4.conf.default.accept_redirects = 0\\nEOF\\nsysctl -qw net.ipv4.conf.all.accept_redirects=0\\nsysctl -qw net.ipv4.conf.default.accept_redirects=0\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "net-log-martians",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"Suspicious packets are logged\", \"name\": \"net-log-martians\", \"references\": {\"cis\": \"3.3.4\"}}, \"spec\": {\"check\": \"[ \\\"$(sysctl -n net.ipv4.conf.all.log_martians)\\\" = \\\"1\\\" ] && [ \\\"$(sysctl -n net.ipv4.conf.default.log_martians)\\\" = \\\"1\\\" ]\", \"level\": \"cis-level1\", \"platform\": \"linux\", \"remediate\": \"cat > /etc/sysctl.d/60-patchgate-net-log-martians.conf <<'EOF'\\nnet.ipv4.conf.all.log_martians = 1\\nnet.ipv4.conf.default.log_martians = 1\\nEOF\\nsysctl -qw net.ipv4.conf.all.log_martians=1\\nsysctl -qw net.ipv4.conf.default.log_martians=1\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "net-reject-source-routing",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"Source routed packets are not accepted\", \"name\": \"net-reject-source-routing\", \"references\": {\"cis\": \"3.3.1\"}}, \"spec\": {\"check\": \"[ \\\"$(sysctl -n net.ipv4.conf.all.accept_source_route)\\\" = \\\"0\\\" ] && [ \\\"$(sysctl -n net.ipv4.conf.default.accept_source_route)\\\" = \\\"0\\\" ]\", \"level\": \"baseline\", \"platform\": \"linux\", \"remediate\": \"cat > /etc/sysctl.d/60-patchgate-net-reject-source-routing.conf <<'EOF'\\nnet.ipv4.conf.all.accept_source_route = 0\\nnet.ipv4.conf.default.accept_source_route = 0\\nEOF\\nsysctl -qw net.ipv4.conf.all.accept_source_route=0\\nsysctl -qw net.ipv4.conf.default.accept_source_route=0\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "password-max-age",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"New accounts' passwords expire within 365 days\", \"name\": \"password-max-age\", \"references\": {\"cis\": \"5.5.1.1\"}}, \"spec\": {\"check\": \"awk '/^PASS_MAX_DAYS/ {found=1; if ($2 > 365 || $2 < 1) bad=1} END {exit (!found || bad)}' /etc/login.defs\", \"level\": \"cis-level1\", \"platform\": \"linux\", \"remediate\": \"if grep -q '^PASS_MAX_DAYS' /etc/login.defs; then sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS 365/' /etc/login.defs; else echo 'PASS_MAX_DAYS 365' >> /etc/login.defs; fi\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "remote-registry-disabled",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"The Remote Registry service is disabled\", \"name\": \"remote-registry-disabled\", \"references\": {\"cis\": \"5.27\"}}, \"spec\": {\"check\": \"$s = Get-Service RemoteRegistry -ErrorAction SilentlyContinue; if (-not $s -or $s.StartType -eq 'Disabled') { exit 0 } else { exit 1 }\", \"level\": \"cis-level1\", \"platform\": \"windows\", \"remediate\": \"Stop-Service RemoteRegistry -Force -ErrorAction SilentlyContinue\\nSet-Service RemoteRegistry -StartupType Disabled\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "restrict-anonymous",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"Anonymous enumeration of SAM accounts and shares is not allowed\", \"name\": \"restrict-anonymous\", \"references\": {\"cis\": \"2.3.10.3\"}}, \"spec\": {\"check\": \"if ((Get-ItemProperty -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Lsa' -Name 'RestrictAnonymous' -ErrorAction SilentlyContinue).'RestrictAnonymous' -eq 1) { exit 0 } else { exit 1 }\", \"level\": \"cis-level1\", \"platform\": \"windows\", \"remediate\": \"if (-not (Test-Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Lsa')) { New-Item -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Lsa' -Force | Out-Null }\\nSet-ItemProperty -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Lsa' -Name 'RestrictAnonymous' -Value 1 -Type DWord\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "restrict-anonymous-sam",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"Anonymous enumeration of SAM accounts is not allowed\", \"name\": \"restrict-anonymous-sam\", \"references\": {\"cis\": \"2.3.10.2\"}}, \"spec\": {\"check\": \"if ((Get-ItemProperty -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Lsa' -Name 'RestrictAnonymousSAM' -ErrorAction SilentlyContinue).'RestrictAnonymousSAM' -eq 1) { exit 0 } else { exit 1 }\", \"level\": \"cis-level1\", \"platform\": \"windows\", \"remediate\": \"if (-not (Test-Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Lsa')) { New-Item -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Lsa' -Force | Out-Null }\\nSet-ItemProperty -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\Lsa' -Name 'RestrictAnonymousSAM' -Value 1 -Type DWord\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "shadow-file-permissions",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"/etc/shadow is owned by root and not readable by others\", \"name\": \"shadow-file-permissions\", \"references\": {\"cis\": \"6.1.3\"}}, \"spec\": {\"check\": \"[ \\\"$(stat -c %U /etc/shadow)\\\" = root ] && [ $(( 0$(stat -c %a /etc/shadow) & 0137 )) -eq 0 ]\", \"level\": \"baseline\", \"platform\": \"linux\", \"remediate\": \"chown root /etc/shadow\\nchmod u-x,g-wx,o-rwx /etc/shadow\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "smb-signing-required",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"SMB server requires packet signing\", \"name\": \"smb-signing-required\", \"references\": {\"cis\": \"2.3.9.2\"}}, \"spec\": {\"check\": \"if ((Get-SmbServerConfiguration).RequireSecuritySignature) { exit 0 } else { exit 1 }\", \"level\": \"cis-level1\", \"platform\": \"windows\", \"remediate\": \"Set-SmbServerConfiguration -RequireSecuritySignature $true -Force\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "smb1-disabled",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"SMBv1 server protocol is disabled\", \"name\": \"smb1-disabled\", \"references\": {\"cis\": \"18.4.2\"}}, \"spec\": {\"check\": \"if ((Get-SmbServerConfiguration).EnableSMB1Protocol) { exit 1 } else { exit 0 }\", \"level\": \"baseline\", \"platform\": \"windows\", \"remediate\": \"Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "ssh-disable-empty-passwords",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"SSH empty passwords are not permitted\", \"name\": \"ssh-disable-empty-passwords\", \"references\": {\"cis\": \"5.2.11\"}}, \"spec\": {\"check\": \"sshd -T 2>/dev/null | grep -qi '^permitemptypasswords no$'\", \"level\": \"cis-level1\", \"platform\": \"linux\", \"remediate\": \"f=/etc/ssh/sshd_config.d/01-patchgate-ssh-disable-empty-passwords.conf\\n# sshd uses the first value it reads: neutralise the directive anywhere else first.\\nfor other in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do\\n  if [ -f \\\"$other\\\" ] && [ \\\"$other\\\" != \\\"$f\\\" ]; then\\n    sed -i -E 's/^[[:space:]]*(PermitEmptyPasswords)[[:space:]]+/# disabled by patchgate: \\\\1 /I' \\\"$other\\\"\\n  fi\\ndone\\necho 'PermitEmptyPasswords no' > \\\"$f\\\"\\nif ! sshd -t; then rm -f \\\"$f\\\"; echo \\\"sshd config invalid; reverted\\\" >&2; exit 1; fi\\nsystemctl reload sshd 2>/dev/null || systemctl reload ssh\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "ssh-disable-password-auth",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"SSH password authentication is disabled\", \"name\": \"ssh-disable-password-auth\", \"references\": {\"cis\": \"5.2.12\"}}, \"spec\": {\"check\": \"sshd -T 2>/dev/null | grep -qi '^passwordauthentication no$'\", \"level\": \"baseline\", \"platform\": \"linux\", \"remediate\": \"f=/etc/ssh/sshd_config.d/01-patchgate-ssh-disable-password-auth.conf\\n# sshd uses the first value it reads: neutralise the directive anywhere else first.\\nfor other in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do\\n  if [ -f \\\"$other\\\" ] && [ \\\"$other\\\" != \\\"$f\\\" ]; then\\n    sed -i -E 's/^[[:space:]]*(PasswordAuthentication)[[:space:]]+/# disabled by patchgate: \\\\1 /I' \\\"$other\\\"\\n  fi\\ndone\\necho 'PasswordAuthentication no' > \\\"$f\\\"\\nif ! sshd -t; then rm -f \\\"$f\\\"; echo \\\"sshd config invalid; reverted\\\" >&2; exit 1; fi\\nsystemctl reload sshd 2>/dev/null || systemctl reload ssh\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "ssh-disable-root-login",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"SSH root login is disabled\", \"name\": \"ssh-disable-root-login\", \"references\": {\"cis\": \"5.2.10\"}}, \"spec\": {\"check\": \"sshd -T 2>/dev/null | grep -qi '^permitrootlogin no$'\", \"level\": \"baseline\", \"platform\": \"linux\", \"remediate\": \"f=/etc/ssh/sshd_config.d/01-patchgate-ssh-disable-root-login.conf\\n# sshd uses the first value it reads: neutralise the directive anywhere else first.\\nfor other in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do\\n  if [ -f \\\"$other\\\" ] && [ \\\"$other\\\" != \\\"$f\\\" ]; then\\n    sed -i -E 's/^[[:space:]]*(PermitRootLogin)[[:space:]]+/# disabled by patchgate: \\\\1 /I' \\\"$other\\\"\\n  fi\\ndone\\necho 'PermitRootLogin no' > \\\"$f\\\"\\nif ! sshd -t; then rm -f \\\"$f\\\"; echo \\\"sshd config invalid; reverted\\\" >&2; exit 1; fi\\nsystemctl reload sshd 2>/dev/null || systemctl reload ssh\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "ssh-disable-x11-forwarding",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"SSH X11 forwarding is disabled\", \"name\": \"ssh-disable-x11-forwarding\", \"references\": {\"cis\": \"5.2.6\"}}, \"spec\": {\"check\": \"sshd -T 2>/dev/null | grep -qi '^x11forwarding no$'\", \"level\": \"baseline\", \"platform\": \"linux\", \"remediate\": \"f=/etc/ssh/sshd_config.d/01-patchgate-ssh-disable-x11-forwarding.conf\\n# sshd uses the first value it reads: neutralise the directive anywhere else first.\\nfor other in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do\\n  if [ -f \\\"$other\\\" ] && [ \\\"$other\\\" != \\\"$f\\\" ]; then\\n    sed -i -E 's/^[[:space:]]*(X11Forwarding)[[:space:]]+/# disabled by patchgate: \\\\1 /I' \\\"$other\\\"\\n  fi\\ndone\\necho 'X11Forwarding no' > \\\"$f\\\"\\nif ! sshd -t; then rm -f \\\"$f\\\"; echo \\\"sshd config invalid; reverted\\\" >&2; exit 1; fi\\nsystemctl reload sshd 2>/dev/null || systemctl reload ssh\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "ssh-max-auth-tries",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"SSH MaxAuthTries is 4 or less\", \"name\": \"ssh-max-auth-tries\", \"references\": {\"cis\": \"5.2.7\"}}, \"spec\": {\"check\": \"sshd -T 2>/dev/null | grep -qi '^maxauthtries 4$'\", \"level\": \"baseline\", \"platform\": \"linux\", \"remediate\": \"f=/etc/ssh/sshd_config.d/01-patchgate-ssh-max-auth-tries.conf\\n# sshd uses the first value it reads: neutralise the directive anywhere else first.\\nfor other in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do\\n  if [ -f \\\"$other\\\" ] && [ \\\"$other\\\" != \\\"$f\\\" ]; then\\n    sed -i -E 's/^[[:space:]]*(MaxAuthTries)[[:space:]]+/# disabled by patchgate: \\\\1 /I' \\\"$other\\\"\\n  fi\\ndone\\necho 'MaxAuthTries 4' > \\\"$f\\\"\\nif ! sshd -t; then rm -f \\\"$f\\\"; echo \\\"sshd config invalid; reverted\\\" >&2; exit 1; fi\\nsystemctl reload sshd 2>/dev/null || systemctl reload ssh\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "tls10-server-disabled",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"TLS 1.0 is disabled for the server\", \"name\": \"tls10-server-disabled\", \"references\": {\"cis\": \"18.4.1\"}}, \"spec\": {\"check\": \"if ((Get-ItemProperty -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\SCHANNEL\\\\Protocols\\\\TLS 1.0\\\\Server' -Name 'Enabled' -ErrorAction SilentlyContinue).'Enabled' -eq 0) { exit 0 } else { exit 1 }\", \"level\": \"baseline\", \"platform\": \"windows\", \"remediate\": \"if (-not (Test-Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\SCHANNEL\\\\Protocols\\\\TLS 1.0\\\\Server')) { New-Item -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\SCHANNEL\\\\Protocols\\\\TLS 1.0\\\\Server' -Force | Out-Null }\\nSet-ItemProperty -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\SCHANNEL\\\\Protocols\\\\TLS 1.0\\\\Server' -Name 'Enabled' -Value 0 -Type DWord\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "tls11-server-disabled",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"TLS 1.1 is disabled for the server\", \"name\": \"tls11-server-disabled\", \"references\": {\"cis\": \"18.4.1\"}}, \"spec\": {\"check\": \"if ((Get-ItemProperty -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\SCHANNEL\\\\Protocols\\\\TLS 1.1\\\\Server' -Name 'Enabled' -ErrorAction SilentlyContinue).'Enabled' -eq 0) { exit 0 } else { exit 1 }\", \"level\": \"baseline\", \"platform\": \"windows\", \"remediate\": \"if (-not (Test-Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\SCHANNEL\\\\Protocols\\\\TLS 1.1\\\\Server')) { New-Item -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\SCHANNEL\\\\Protocols\\\\TLS 1.1\\\\Server' -Force | Out-Null }\\nSet-ItemProperty -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\SCHANNEL\\\\Protocols\\\\TLS 1.1\\\\Server' -Name 'Enabled' -Value 0 -Type DWord\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "uac-enabled",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"User Account Control is enabled\", \"name\": \"uac-enabled\", \"references\": {\"cis\": \"2.3.17.6\"}}, \"spec\": {\"check\": \"if ((Get-ItemProperty -Path 'HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\System' -Name 'EnableLUA' -ErrorAction SilentlyContinue).'EnableLUA' -eq 1) { exit 0 } else { exit 1 }\", \"level\": \"baseline\", \"platform\": \"windows\", \"remediate\": \"if (-not (Test-Path 'HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\System')) { New-Item -Path 'HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\System' -Force | Out-Null }\\nSet-ItemProperty -Path 'HKLM:\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Policies\\\\System' -Name 'EnableLUA' -Value 1 -Type DWord\\n\"}}"
+ },
+ {
+  "kind": "Control",
+  "name": "wdigest-disabled",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Control\", \"metadata\": {\"description\": \"WDigest does not store plaintext credentials\", \"name\": \"wdigest-disabled\", \"references\": {\"cis\": \"18.4.8\"}}, \"spec\": {\"check\": \"if ((Get-ItemProperty -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\WDigest' -Name 'UseLogonCredential' -ErrorAction SilentlyContinue).'UseLogonCredential' -eq 0) { exit 0 } else { exit 1 }\", \"level\": \"baseline\", \"platform\": \"windows\", \"remediate\": \"if (-not (Test-Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\WDigest')) { New-Item -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\WDigest' -Force | Out-Null }\\nSet-ItemProperty -Path 'HKLM:\\\\SYSTEM\\\\CurrentControlSet\\\\Control\\\\SecurityProviders\\\\WDigest' -Name 'UseLogonCredential' -Value 0 -Type DWord\\n\"}}"
+ },
+ {
+  "kind": "Baseline",
+  "name": "amazon2023-cis-level1",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Baseline\", \"metadata\": {\"description\": \"CIS Amazon Linux 2023 Level 1 via ansible-lockdown (full benchmark coverage).\", \"name\": \"amazon2023-cis-level1\", \"references\": {\"benchmark\": \"CIS Amazon Linux 2023 Benchmark v1.0.0\", \"upstream\": \"https://github.com/ansible-lockdown/AMAZON2023-CIS\"}}, \"spec\": {\"collections\": [{\"name\": \"community.general\", \"sha256\": \"816291784a3369a888119a6a5d00593beec44d919605ac6553b0a54274470beb\", \"source\": \"https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-14.0.1.tar.gz\", \"version\": \"14.0.1\"}, {\"name\": \"community.crypto\", \"sha256\": \"90ab666a027b47c7cb2f46b6a1e1725798e7cf6baa47b1a765e5a3c754799355\", \"source\": \"https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-crypto-3.5.1.tar.gz\", \"version\": \"3.5.1\"}, {\"name\": \"community.library_inventory_filtering_v1\", \"sha256\": \"cbb9e86c5b1720df21e940cedcd2f3e1226c38262623e090a883712610733851\", \"source\": \"https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-library_inventory_filtering_v1-1.1.5.tar.gz\", \"version\": \"1.1.5\"}, {\"name\": \"ansible.posix\", \"sha256\": \"00a58c5d804c9adc99c3c3dc1b9f2246f4bb5f7337941440e0956f0e31c3b82b\", \"source\": \"https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/ansible-posix-2.2.2.tar.gz\", \"version\": \"2.2.2\"}], \"engine\": \"ansible\", \"platform\": \"linux\", \"playbook\": \"site.yml\", \"sha256\": \"7e5bda3aca0c55fea478ed29ffd5a05bd1222458c90732afc400233d9d3e8b39\", \"source\": \"https://github.com/ansible-lockdown/AMAZON2023-CIS/archive/refs/tags/1.5.0.tar.gz\", \"variables\": {\"amzn2023cis_level_1\": true, \"amzn2023cis_level_2\": false, \"amzn2023cis_rule_4_6_6\": false, \"run_audit\": false, \"setup_audit\": false}}}"
+ },
+ {
+  "kind": "Baseline",
+  "name": "windows2022-cis-level1",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"Baseline\", \"metadata\": {\"description\": \"CIS Microsoft Windows Server 2022 Member Server Level 1 via the CISDSC module.\", \"name\": \"windows2022-cis-level1\", \"references\": {\"benchmark\": \"CIS Microsoft Windows Server 2022 Benchmark (Member Server, 21H2)\", \"upstream\": \"https://www.powershellgallery.com/packages/CISDSC\"}}, \"spec\": {\"engine\": \"dsc\", \"exclude\": [\"2.3.1.1\", \"2.3.1.5\"], \"modules\": [{\"name\": \"CISDSC\", \"sha256\": \"bf5bd09e0289f5733ee88abb6e038fea11802a00ca3188a3aad30f92b998534b\", \"source\": \"https://www.powershellgallery.com/api/v2/package/CISDSC/4.0.1\", \"version\": \"4.0.1\"}, {\"name\": \"AuditPolicyDsc\", \"sha256\": \"6754aa6b20322ad4ab90faba310e583b6a13288940dd96594b75fcc712a1bcbb\", \"source\": \"https://www.powershellgallery.com/api/v2/package/AuditPolicyDsc/1.4.0.0\", \"version\": \"1.4.0.0\"}, {\"name\": \"SecurityPolicyDsc\", \"sha256\": \"b64c2777343f19ae2ba2fcc2a8981420d61b0993bd428c005eceef8293daeadd\", \"source\": \"https://www.powershellgallery.com/api/v2/package/SecurityPolicyDsc/2.10.0.0\", \"version\": \"2.10.0.0\"}], \"parameters\": {\"LevelOne\": true, \"LevelTwo\": false, \"cis2316AccountsRenameguestaccount\": \"pg-guest\", \"cis2374LegalNoticeText\": \"This system is for authorized use only. Activity is monitored and logged. Unauthorized access is prohibited and may be prosecuted.\", \"cis2375LegalNoticeCaption\": \"Authorized use only\"}, \"platform\": \"windows\", \"resource\": {\"module\": \"CISDSC\", \"name\": \"CIS_Microsoft_Windows_Server_2022_Member_Server_Release_21H2\"}}}"
+ },
+ {
+  "kind": "AppSet",
+  "name": "devtools",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"AppSet\", \"metadata\": {\"description\": \"Command line tools for troubleshooting.\", \"name\": \"devtools\"}, \"spec\": {\"apps\": [{\"name\": \"git\"}, {\"name\": \"jq\"}], \"platform\": \"linux\", \"prune\": true}}"
+ },
+ {
+  "kind": "AppSet",
+  "name": "dotnet8",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"AppSet\", \"metadata\": {\"description\": \".NET 8 runtime and ASP.NET Core runtime.\", \"name\": \"dotnet8\"}, \"spec\": {\"apps\": [{\"name\": \"dotnet-8.0-runtime\", \"version\": \"8.0.34\"}, {\"name\": \"dotnet-8.0-aspnetruntime\", \"version\": \"8.0.34\"}], \"platform\": \"windows\", \"prune\": true}}"
+ },
+ {
+  "kind": "AppSet",
+  "name": "nodejs-lts",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"AppSet\", \"metadata\": {\"description\": \"Node.js LTS.\", \"name\": \"nodejs-lts\"}, \"spec\": {\"apps\": [{\"name\": \"nodejs-lts\", \"version\": \"26.13.1\"}], \"platform\": \"windows\", \"prune\": true}}"
+ }
+]

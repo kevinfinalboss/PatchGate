@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 import yaml
+
 from patchgate.catalog import (
     Catalog,
     CatalogError,

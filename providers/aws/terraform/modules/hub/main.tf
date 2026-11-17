@@ -140,10 +140,6 @@ data "archive_file" "resolver" {
     content  = file("${local.repo_root}/providers/aws/functions/resolver/handler.py")
     filename = "handler.py"
   }
-  source {
-    content  = file("${local.repo_root}/providers/aws/functions/resolver/plans.json")
-    filename = "plans.json"
-  }
 }
 
 data "aws_iam_policy_document" "lambda_trust" {
@@ -180,6 +176,11 @@ data "aws_iam_policy_document" "resolver" {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.resolver.arn}:*"]
   }
+  statement {
+    sid       = "ReadConfiguration"
+    actions   = ["dynamodb:GetItem", "dynamodb:Query"]
+    resources = [aws_dynamodb_table.config.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "resolver" {
@@ -203,10 +204,12 @@ resource "aws_lambda_function" "resolver" {
   source_code_hash = data.archive_file.resolver.output_base64sha256
   timeout          = 30
   memory_size      = 256
+  layers           = [aws_lambda_layer_version.core.arn]
 
   environment {
     variables = {
-      EXECUTION_ROLE_NAME = var.execution_role_name
+      EXECUTION_ROLE_NAME    = var.execution_role_name
+      PATCHGATE_CONFIG_TABLE = aws_dynamodb_table.config.name
     }
   }
 

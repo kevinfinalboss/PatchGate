@@ -19,6 +19,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("validate", help="Validate every catalog document")
     compile_one = sub.add_parser("compile", help="Print the install plan for a profile")
     compile_one.add_argument("profile")
+    export = sub.add_parser("export", help="Write every document (seed for config stores)")
+    export.add_argument("--out", type=Path, required=True)
     compile_all = sub.add_parser("compile-all", help="Write every plan to a JSON file")
     compile_all.add_argument("--out", type=Path, required=True)
     compile_all.add_argument(
@@ -36,6 +38,18 @@ def main(argv: list[str] | None = None) -> int:
                 f"{len(catalog.baselines)} baselines, {len(catalog.appsets)} app sets, "
                 f"{len(catalog.profiles)} profiles"
             )
+        elif args.command == "export":
+            documents = [
+                {
+                    "kind": doc["kind"],
+                    "name": doc["metadata"]["name"],
+                    "document": json.dumps(doc, sort_keys=True),
+                }
+                for doc in catalog.documents()
+            ]
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(json.dumps(documents, indent=1) + "\n")
+            print(f"wrote {len(documents)} documents to {args.out}")
         elif args.command == "compile":
             print(json.dumps(catalog.compile(args.profile), indent=2))
         else:

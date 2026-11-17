@@ -47,3 +47,6 @@ backend.hcl
 
 # Build artifacts of root modules
 **/.build/
+
+# Lambda build output
+providers/aws/functions/**/.build/

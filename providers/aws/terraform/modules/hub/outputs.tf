@@ -14,3 +14,12 @@ output "state_machine_arn" {
 output "notifications_topic_arn" {
   value = aws_sns_topic.notifications.arn
 }
+
+output "config_table" {
+  description = "Configuration table used by patchgate-cli."
+  value       = aws_dynamodb_table.config.name
+}
+
+output "history_table" {
+  value = aws_dynamodb_table.history.name
+}

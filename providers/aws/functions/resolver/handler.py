@@ -1,8 +1,9 @@
 """Resolve a launched EC2 instance into everything the bootstrap workflow needs.
 
 Runs in the hub account. Assumes Patchgate-Execution in the account that owns the
-instance, reads its tags and SSM status, and picks the pre-compiled install plan for
-its profile from plans.json (generated from core/catalog by `make plans`).
+instance, reads its tags and SSM status, loads the profile and requested app sets from the
+configuration table (DynamoDB), validates them and composes the install plan at run time.
+Invalid or inconsistent configuration is refused, never applied.
 
 Returns a flat dict consumed by the Step Functions bootstrap workflow. Every key is always
 present so Choice states never hit a missing path.
@@ -14,21 +15,24 @@ import json
 import logging
 import os
 import re
-from functools import cache
-from pathlib import Path
 from typing import Any
 
 import boto3
+
+from patchgate.plan import CatalogError, encode_plan
+from patchgate.schema import validate_document
+from patchgate_aws.store import ConfigStore
 
 LOG = logging.getLogger()
 LOG.setLevel(logging.INFO)
 
 EXECUTION_ROLE_NAME = os.environ.get("EXECUTION_ROLE_NAME", "Patchgate-Execution")
 PARTITION = os.environ.get("AWS_PARTITION", "aws")
-PLANS_FILE = Path(__file__).with_name("plans.json")
+CONFIG_TABLE = os.environ.get("PATCHGATE_CONFIG_TABLE", "patchgate-config")
 
 TAG_MANAGED = "Patchgate:Managed"
 TAG_PROFILE = "Patchgate:Profile"
+TAG_APPSETS = "Patchgate:AppSets"
 TAG_STATUS = "Patchgate:BootstrapStatus"
 TAG_DIGEST = "Patchgate:BootstrapDigest"
 
@@ -37,17 +41,43 @@ DOCUMENTS = {"linux": "Patchgate-Bootstrap-Linux", "windows": "Patchgate-Bootstr
 
 _ACCOUNT = re.compile(r"^\d{12}$")
 _INSTANCE = re.compile(r"^i-[0-9a-f]{8,17}$")
-_PROFILE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+_NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+_PROFILE = _NAME
 
 
 class ResolveError(Exception):
     """Instance cannot be bootstrapped (bad input, unknown profile, platform mismatch)."""
 
 
-@cache
-def load_plans() -> dict[str, dict[str, str]]:
-    plans: dict[str, dict[str, str]] = json.loads(PLANS_FILE.read_text())
-    return plans
+def parse_appsets(value: str) -> list[str]:
+    names = [part.strip() for part in value.split(",") if part.strip()]
+    for name in names:
+        _require(_NAME, name, "app set")
+    return names
+
+
+def compose_plan(store: ConfigStore, profile: str, appsets: list[str], platform: str) -> Any:
+    """Load, validate and compile; any problem becomes a ResolveError listing every issue."""
+    library = store.library_for(profile, appsets)
+    if profile not in library.profiles:
+        raise ResolveError(f"unknown profile {profile!r}")
+    errors = [
+        error
+        for kind in ("Profile", "Agent", "Control", "Baseline", "AppSet")
+        for name, doc in library.bucket(kind).items()
+        for error in validate_document(doc, f"{kind}/{name}")
+    ]
+    errors += library.reference_errors()
+    if errors:
+        raise ResolveError("invalid configuration: " + "; ".join(errors[:10]))
+    profile_platform = library.profiles[profile]["spec"]["platform"]
+    if profile_platform != platform:
+        raise ResolveError(f"profile {profile!r} is for {profile_platform}, instance is {platform}")
+    try:
+        plan = library.compile(profile, appsets)
+        return plan, encode_plan(plan)
+    except CatalogError as exc:
+        raise ResolveError("; ".join(exc.errors)) from exc
 
 
 def _require(pattern: re.Pattern[str], value: Any, field: str) -> str:
@@ -102,6 +132,7 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         "ssmOnline": False,
         "platform": "",
         "profile": "",
+        "appSets": [],
         "digest": "",
         "documentName": "",
         "documentParameters": {},
@@ -116,25 +147,21 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
 
     platform = "windows" if instance.get("Platform", "").lower() == "windows" else "linux"
     profile = _require(_PROFILE, tags.get(TAG_PROFILE, DEFAULT_PROFILES[platform]), "profile")
-    entry = load_plans().get(profile)
-    if entry is None:
-        raise ResolveError(f"unknown profile {profile!r}")
-    if entry["platform"] != platform:
-        raise ResolveError(
-            f"profile {profile!r} is for {entry['platform']}, instance is {platform}"
-        )
+    appsets = parse_appsets(tags.get(TAG_APPSETS, ""))
+    plan, encoded = compose_plan(ConfigStore(CONFIG_TABLE), profile, appsets, platform)
 
     result.update(
         managed=True,
         platform=platform,
         profile=profile,
-        digest=entry["digest"],
+        appSets=appsets,
+        digest=plan["digest"],
         alreadyBootstrapped=(
-            tags.get(TAG_STATUS) == "Success" and tags.get(TAG_DIGEST) == entry["digest"]
+            tags.get(TAG_STATUS) == "Success" and tags.get(TAG_DIGEST) == plan["digest"]
         ),
         ssmOnline=ssm_ping_status(session, instance_id) == "Online",
         documentName=DOCUMENTS[platform],
-        documentParameters={"Plan": [entry["plan"]]},
+        documentParameters={"Plan": [encoded]},
     )
     LOG.info(
         json.dumps({k: v for k, v in result.items() if k != "documentParameters"}, default=str)

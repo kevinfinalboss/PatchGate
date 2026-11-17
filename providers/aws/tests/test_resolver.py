@@ -12,6 +12,7 @@ import pytest
 from moto import mock_aws
 
 HANDLER = Path(__file__).resolve().parents[1] / "functions" / "resolver" / "handler.py"
+CATALOG = Path(__file__).resolve().parents[3] / "core" / "catalog"
 ACCOUNT = "123456789012"
 REGION = "us-east-2"
 
@@ -22,6 +23,7 @@ def resolver(monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
     monkeypatch.setenv("AWS_DEFAULT_REGION", REGION)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("PATCHGATE_CONFIG_TABLE", "patchgate-config")
     spec = importlib.util.spec_from_file_location("resolver_handler", HANDLER)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -29,7 +31,29 @@ def resolver(monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, "ssm_ping_status", lambda session, iid: "Online")
     with mock_aws():
+        seed_config_table()
         yield module
+
+
+def seed_config_table() -> None:
+    from patchgate.catalog import Catalog
+    from patchgate_aws.store import BUILT_IN, ConfigStore
+
+    boto3.client("dynamodb", region_name=REGION).create_table(
+        TableName="patchgate-config",
+        BillingMode="PAY_PER_REQUEST",
+        AttributeDefinitions=[
+            {"AttributeName": "kind", "AttributeType": "S"},
+            {"AttributeName": "name", "AttributeType": "S"},
+        ],
+        KeySchema=[
+            {"AttributeName": "kind", "KeyType": "HASH"},
+            {"AttributeName": "name", "KeyType": "RANGE"},
+        ],
+    )
+    store = ConfigStore("patchgate-config")
+    for doc in Catalog.load(CATALOG).documents():
+        store.put(doc, "test-seed", managed_by=BUILT_IN)
 
 
 def launch(tags: dict[str, str], platform: str | None = None) -> str:
@@ -86,7 +110,8 @@ def test_windows_instance_uses_windows_document(
 
 
 def test_already_bootstrapped_with_same_digest(resolver: ModuleType) -> None:
-    digest = resolver.load_plans()["base-linux"]["digest"]
+    first = resolver.handler(event(launch({"Patchgate:Managed": "true"})))
+    digest = first["digest"]
     tags = {
         "Patchgate:Managed": "true",
         "Patchgate:BootstrapStatus": "Success",
@@ -130,14 +155,80 @@ def test_invalid_events_are_rejected(resolver: ModuleType, overrides: dict[str, 
         resolver.handler(event("i-0123456789abcdef0", **overrides))
 
 
-def test_plans_json_is_up_to_date_with_catalog() -> None:
-    from patchgate.catalog import Catalog
+def test_appsets_are_composed_and_change_the_digest(resolver: ModuleType) -> None:
+    plain = resolver.handler(event(launch({"Patchgate:Managed": "true"})))
+    tools = resolver.handler(
+        event(launch({"Patchgate:Managed": "true", "Patchgate:AppSets": "devtools"}))
+    )
+    assert tools["appSets"] == ["devtools"]
+    assert tools["digest"] != plain["digest"]
+    from patchgate.plan import decode_plan
 
-    catalog = Catalog.load(Path(__file__).resolve().parents[3] / "core" / "catalog")
+    plan = decode_plan(tools["documentParameters"]["Plan"][0])
+    assert {a["name"] for a in plan["apps"]} == {"git", "jq"}
+
+
+@pytest.mark.parametrize(
+    ("appsets", "message"),
+    [
+        ("dotnet8", "not allowed by profile"),  # Windows set on a Linux profile
+        ("does-not-exist", "unknown app set"),
+        ("bad;name", "invalid app set"),
+    ],
+)
+def test_invalid_appset_requests_are_refused(
+    resolver: ModuleType, appsets: str, message: str
+) -> None:
+    instance = launch({"Patchgate:Managed": "true", "Patchgate:AppSets": appsets})
+    with pytest.raises(resolver.ResolveError, match=message):
+        resolver.handler(event(instance))
+
+
+def test_invalid_document_edited_in_console_is_refused(resolver: ModuleType) -> None:
+    """Someone edits an item directly in DynamoDB and breaks it: never apply it."""
     import json
 
-    bundled = json.loads((HANDLER.parent / "plans.json").read_text())
-    expected = {name: plan["digest"] for name, plan in catalog.compile_all().items()}
-    assert {name: entry["digest"] for name, entry in bundled.items()} == expected, (
-        "plans.json is stale: run `make plans`"
+    table = boto3.resource("dynamodb", region_name=REGION).Table("patchgate-config")
+    item = table.get_item(Key={"kind": "AppSet", "name": "devtools"})["Item"]
+    doc = json.loads(item["document"])
+    doc["spec"]["apps"] = []  # schema requires at least one app
+    table.update_item(
+        Key={"kind": "AppSet", "name": "devtools"},
+        UpdateExpression="SET #d = :d",
+        ExpressionAttributeNames={"#d": "document"},
+        ExpressionAttributeValues={":d": json.dumps(doc)},
     )
+    instance = launch({"Patchgate:Managed": "true", "Patchgate:AppSets": "devtools"})
+    with pytest.raises(resolver.ResolveError, match="invalid configuration: AppSet/devtools"):
+        resolver.handler(event(instance))
+
+
+def test_configuration_changes_apply_without_redeploy(resolver: ModuleType) -> None:
+    from patchgate_aws.store import ConfigStore
+
+    store = ConfigStore("patchgate-config")
+    before = resolver.handler(event(launch({"Patchgate:Managed": "true"})))["digest"]
+    record = store.get("Profile", "base-linux")
+    assert record is not None
+    doc = record.document
+    doc["spec"]["drift"]["interval"] = "2h"
+    store.put(doc, "tester")
+    after = resolver.handler(event(launch({"Patchgate:Managed": "true"})))["digest"]
+    assert after != before
+
+
+def test_seed_file_is_up_to_date_with_catalog() -> None:
+    import json
+
+    from patchgate.catalog import Catalog
+
+    seed = json.loads((Path(__file__).resolve().parents[1] / "config" / "seed.json").read_text())
+    expected = [
+        {
+            "kind": d["kind"],
+            "name": d["metadata"]["name"],
+            "document": json.dumps(d, sort_keys=True),
+        }
+        for d in Catalog.load(CATALOG).documents()
+    ]
+    assert seed == expected, "seed.json is stale: run `make seed`"
