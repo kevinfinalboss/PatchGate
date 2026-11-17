@@ -30,3 +30,5 @@ $global:compiler = {
 }
 
 $global:lcm = { param($Dir) $global:lcmCalled = $true }
+
+$global:prepare = { $global:prepared = $true }

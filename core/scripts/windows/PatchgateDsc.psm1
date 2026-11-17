@@ -155,10 +155,18 @@ PatchgateLcm -OutputPath '$($meta.Replace("'", "''"))' | Out-Null
     Set-DscLocalConfigurationManager -Path $meta -Force
 }
 
+function Initialize-PatchgateWinRm {
+    # Large baselines (hundreds of resources) exceed WinRM's default 500 KB envelope, which DSC
+    # cmdlets use locally. Raise it once; only the local WS-Management limit changes.
+    param([int]$EnvelopeKb = 8192)
+    $current = [int](Get-Item -Path 'WSMan:\localhost\MaxEnvelopeSizekb').Value
+    if ($current -lt $EnvelopeKb) { Set-Item -Path 'WSMan:\localhost\MaxEnvelopeSizekb' -Value $EnvelopeKb }
+}
+
 function Invoke-PatchgateDscBaseline {
     <#
         Apply (enforce) or only evaluate (audit) a DSC baseline. Returns @{ results; rebootRequired }.
-        -Compiler and -LcmInitializer wrap Windows-only steps so tests can replace them.
+        -Prepare, -Compiler and -LcmInitializer wrap Windows-only steps so tests can replace them.
     #>
     param(
         [Parameter(Mandatory)]$Baseline,
@@ -169,8 +177,10 @@ function Invoke-PatchgateDscBaseline {
             & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $ScriptPath
             if ($LASTEXITCODE -ne 0) { throw "DSC compilation failed ($LASTEXITCODE)" }
         },
-        [scriptblock]$LcmInitializer = { param([string]$Dir) Initialize-PatchgateLcm -WorkDir $Dir }
+        [scriptblock]$LcmInitializer = { param([string]$Dir) Initialize-PatchgateLcm -WorkDir $Dir },
+        [scriptblock]$Prepare = { Initialize-PatchgateWinRm }
     )
+    & $Prepare
     $mofDir = Join-Path $WorkDir 'mof'
     $scriptPath = Join-Path $WorkDir 'baseline.ps1'
     Set-Content -Path $scriptPath -Value (Get-PatchgateDscScript -Baseline $Baseline -OutputPath $mofDir) -Encoding UTF8
@@ -192,4 +202,4 @@ function Invoke-PatchgateDscBaseline {
     return @{ results = (ConvertTo-PatchgateDscEvidence -Before $before -After $after -Mode $Mode); rebootRequired = $reboot }
 }
 
-Export-ModuleMember -Function Expand-PatchgateZip, Install-PatchgateModule, Get-PatchgateDscScript, ConvertTo-PatchgateDscEvidence, Invoke-PatchgateDscBaseline, Initialize-PatchgateLcm
+Export-ModuleMember -Function Initialize-PatchgateWinRm, Expand-PatchgateZip, Install-PatchgateModule, Get-PatchgateDscScript, ConvertTo-PatchgateDscEvidence, Invoke-PatchgateDscBaseline, Initialize-PatchgateLcm

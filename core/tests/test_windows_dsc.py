@@ -118,11 +118,13 @@ def test_baseline_evidence_per_cis_rule(
     out = ps(
         f". '{STUBS}'; $b = '{baseline_json()}' | ConvertFrom-Json; "
         f"$r = Invoke-PatchgateDscBaseline -Baseline $b -Mode {mode} -WorkDir '{tmp_path}' "
-        "-Compiler $global:compiler -LcmInitializer $global:lcm; "
-        "@{ results = $r.results; started = [bool]$global:started; lcm = [bool]$global:lcmCalled } "
+        "-Compiler $global:compiler -LcmInitializer $global:lcm -Prepare $global:prepare; "
+        "@{ results = $r.results; started = [bool]$global:started; lcm = [bool]$global:lcmCalled; "
+        "prepared = [bool]$global:prepared } "
         "| ConvertTo-Json -Depth 5"
     )
     assert {r["cis"]: r["status"] for r in out["results"]} == expected
     assert [r["cis"] for r in out["results"]] == ["1.1.4", "1.1.6", "18.9.1"]  # numeric order
     assert out["started"] is applied and out["lcm"] is applied
+    assert out["prepared"] is True  # WinRM envelope is raised before any DSC call
     assert out["results"][0]["title"].startswith("1.1.4 - (L1) Ensure min length")
