@@ -40,13 +40,13 @@ Each phase ends with: working code, updated docs, an ADR for its main decision a
 
 ## Phase 3 — Hardening and drift
 
-### 3a — Native controls engine ⏳
+### 3a — Native controls engine ✅
 - [x] `Control` catalog kind; levels `baseline` / `cis-level1`; per-profile exclusions (ADR 0007)
 - [x] 17 Linux and 15 Windows controls with CIS references
 - [x] Controls executed by both installers with per-control evidence (`compliance.json`)
 - [x] Drift: State Manager association every 30 min, per-profile interval (30m–24h/off), enforce or audit mode
 - [x] Drift findings published as `io.patchgate` events → hub → email
-- [ ] Verified in the lab (Linux and Windows)
+- [x] Verified in the lab: hardened-linux (17 controls) and hardened-windows (15) applied on bootstrap; manual drift (SSH root login via a conflicting drop-in, ICMP redirects, disabled ClamAV timer, LLMNR, firewall) corrected by the drift association and emailed from the hub
 
 ### 3b — Ansible engine (Linux)
 - [ ] `engine: ansible` with pinned ansible-lockdown roles; results mapped to the same evidence format
