@@ -27,9 +27,16 @@ spec:
   resource:
     module: CISDSC
     name: CIS_Microsoft_Windows_Server_2022_Member_Server_Release_21H2
+  # The module refuses to compile unless rules 2.3.1.5, 2.3.1.6, 2.3.7.4 and 2.3.7.5 either get a
+  # value or are excluded explicitly.
   parameters:
     LevelOne: true
     LevelTwo: false
-  # Rules that rename accounts or set a logon banner are skipped automatically by the module
-  # unless values are provided; add documented exceptions here (CIS rule IDs).
-  exclude: []
+    cis2316AccountsRenameguestaccount: pg-guest
+    cis2375LegalNoticeCaption: Authorized use only
+    cis2374LegalNoticeText: >-
+      This system is for authorized use only. Activity is monitored and logged.
+      Unauthorized access is prohibited and may be prosecuted.
+  # Documented exceptions (CIS rule IDs):
+  exclude:
+    - "2.3.1.5" # Rename Administrator: EC2Launch password retrieval and AWS tooling expect "Administrator"

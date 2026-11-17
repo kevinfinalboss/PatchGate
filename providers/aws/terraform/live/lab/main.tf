@@ -1,3 +1,8 @@
+variable "enable_linux" {
+  type    = bool
+  default = true
+}
+
 variable "enable_windows" {
   type    = bool
   default = true
@@ -25,6 +30,7 @@ variable "windows_profile" {
 
 module "lab" {
   source              = "../../modules/lab"
+  enable_linux        = var.enable_linux
   enable_windows      = var.enable_windows
   ttl_hours           = var.ttl_hours
   linux_profile       = var.linux_profile
