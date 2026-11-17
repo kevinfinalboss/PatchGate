@@ -37,8 +37,8 @@ format: ## Auto-format Python and Terraform
 
 .PHONY: typecheck
 typecheck: ## Run mypy (each Lambda separately: they all use handler.py)
-	$(VENV)/bin/mypy core/lib core/tests core/scripts/linux providers/aws/tests
-	@for fn in providers/aws/functions/*/; do echo "mypy $$fn"; $(VENV)/bin/mypy $$fn || exit 1; done
+	$(VENV)/bin/mypy core/lib core/tests core/scripts/linux providers/aws/lib providers/aws/tests
+	@for fn in providers/aws/functions/*/handler.py; do echo "mypy $$fn"; $(VENV)/bin/mypy $$fn || exit 1; done
 
 .PHONY: test
 test: ## Run unit and contract tests

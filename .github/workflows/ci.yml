@@ -27,8 +27,8 @@ jobs:
       - run: ruff format --check .
       - name: mypy
         run: |
-          mypy core/lib core/tests core/scripts/linux providers/aws/tests
-          for fn in providers/aws/functions/*/; do mypy "$fn"; done
+          mypy core/lib core/tests core/scripts/linux providers/aws/lib providers/aws/tests
+          for fn in providers/aws/functions/*/handler.py; do mypy "$fn"; done
       - name: core/ must not import cloud SDKs
         run: "! grep -rnE '^\\s*(import|from)\\s+(boto3|botocore|azure)' core --include='*.py'"
       - name: Validate catalog
