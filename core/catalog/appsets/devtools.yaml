@@ -1,0 +1,11 @@
+apiVersion: patchgate.io/v1alpha1
+kind: AppSet
+metadata:
+  name: devtools
+  description: Command line tools for troubleshooting.
+spec:
+  platform: linux
+  prune: true
+  apps:
+    - name: git
+    - name: jq

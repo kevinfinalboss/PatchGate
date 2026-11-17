@@ -1,0 +1,11 @@
+apiVersion: patchgate.io/v1alpha1
+kind: AppSet
+metadata:
+  name: nodejs-lts
+  description: Node.js LTS.
+spec:
+  platform: windows
+  prune: true
+  apps:
+    - name: nodejs-lts
+      version: "26.13.1"

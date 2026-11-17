@@ -1,0 +1,13 @@
+apiVersion: patchgate.io/v1alpha1
+kind: AppSet
+metadata:
+  name: dotnet8
+  description: .NET 8 runtime and ASP.NET Core runtime.
+spec:
+  platform: windows
+  prune: true
+  apps:
+    - name: dotnet-8.0-runtime
+      version: "8.0.34"
+    - name: dotnet-8.0-aspnetruntime
+      version: "8.0.34"

@@ -6,7 +6,7 @@ metadata:
 spec:
   platform: windows
   agents: [cloudwatch-agent, microsoft-defender]
-  chocolatey:
+  apps:
     - name: 7zip
   ring: 0
   hardening:

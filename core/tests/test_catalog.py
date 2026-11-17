@@ -90,12 +90,6 @@ def test_agent_must_support_profile_platform(tmp_path: Path) -> None:
         Catalog.load(tmp_path)
 
 
-def test_chocolatey_only_on_windows(tmp_path: Path) -> None:
-    write_catalog(tmp_path, agent("demo"), profile("p", chocolatey=[{"name": "7zip"}]))
-    with pytest.raises(CatalogError, match="chocolatey is only supported on windows"):
-        Catalog.load(tmp_path)
-
-
 def test_file_name_must_match_metadata_name(tmp_path: Path) -> None:
     (tmp_path / "agents").mkdir()
     (tmp_path / "agents" / "other.yaml").write_text(yaml.safe_dump(agent("demo")))
@@ -258,3 +252,103 @@ def test_baseline_engine_must_match_platform() -> None:
         },
     }
     assert validate_document(doc)
+
+
+# ---------------------------------------------------------------- app sets
+
+
+def appset(name: str, *apps: dict[str, str], platform: str = "linux", prune: bool = True) -> Any:
+    return {
+        "apiVersion": "patchgate.io/v1alpha1",
+        "kind": "AppSet",
+        "metadata": {"name": name, "description": "d"},
+        "spec": {"platform": platform, "prune": prune, "apps": list(apps)},
+    }
+
+
+def write_appsets(root: Path, *docs: dict[str, Any]) -> None:
+    folder = root / "appsets"
+    folder.mkdir(parents=True, exist_ok=True)
+    for doc in docs:
+        (folder / f"{doc['metadata']['name']}.yaml").write_text(yaml.safe_dump(doc))
+
+
+def test_profile_and_appsets_are_composed(tmp_path: Path) -> None:
+    write_appsets(
+        tmp_path,
+        appset("tools", {"name": "jq"}, {"name": "git", "version": "2.40.1"}),
+        appset("web", {"name": "nginx", "ensure": "latest"}, prune=False),
+    )
+    write_catalog(
+        tmp_path,
+        profile("p", apps=[{"name": "htop"}], allowedAppSets=["tools", "web"]),
+    )
+    plan = Catalog.load(tmp_path).compile("p", ["tools", "web", "tools"])
+    assert plan["appSets"] == ["tools", "web"]
+    assert [(a["name"], a["source"], a["prune"]) for a in plan["apps"]] == [
+        ("htop", "profile", False),
+        ("jq", "appset:tools", True),
+        ("git", "appset:tools", True),
+        ("nginx", "appset:web", False),
+    ]
+    assert plan["apps"][2]["version"] == "2.40.1"
+    assert plan["apps"][3]["ensure"] == "latest"
+
+
+def test_appsets_change_the_digest(tmp_path: Path) -> None:
+    write_appsets(tmp_path, appset("tools", {"name": "jq"}))
+    write_catalog(tmp_path, profile("p", allowedAppSets=["tools"]))
+    catalog = Catalog.load(tmp_path)
+    assert catalog.compile("p")["digest"] != catalog.compile("p", ["tools"])["digest"]
+
+
+@pytest.mark.parametrize(
+    ("requested", "message"),
+    [
+        (["nope"], "unknown app set 'nope'"),
+        (["tools"], "not allowed by profile"),
+        (["winonly"], "not for linux"),
+    ],
+)
+def test_appset_requests_are_validated(tmp_path: Path, requested: list[str], message: str) -> None:
+    write_appsets(
+        tmp_path,
+        appset("tools", {"name": "jq"}),
+        appset("winonly", {"name": "7zip"}, platform="windows"),
+    )
+    write_catalog(tmp_path, profile("p", allowedAppSets=[]))
+    if requested == ["winonly"]:
+        # A profile cannot allow a set for another platform; craft the library directly.
+        catalog = Catalog.load(tmp_path)
+        catalog.profiles["p"]["spec"]["allowedAppSets"] = ["winonly"]
+    else:
+        catalog = Catalog.load(tmp_path)
+    with pytest.raises(CatalogError, match=message):
+        catalog.compile("p", requested)
+
+
+def test_conflicting_versions_between_sets_are_rejected(tmp_path: Path) -> None:
+    write_appsets(
+        tmp_path,
+        appset("a", {"name": "jq", "version": "1.6"}),
+        appset("b", {"name": "jq", "version": "1.7"}),
+    )
+    write_catalog(tmp_path, profile("p", allowedAppSets=["a", "b"]))
+    with pytest.raises(CatalogError, match="conflicts between appset:a"):
+        Catalog.load(tmp_path).compile("p", ["a", "b"])
+
+
+def test_profile_cannot_allow_appset_of_another_platform(tmp_path: Path) -> None:
+    write_appsets(tmp_path, appset("winonly", {"name": "7zip"}, platform="windows"))
+    write_catalog(tmp_path, profile("p", allowedAppSets=["winonly"]))
+    with pytest.raises(CatalogError, match="app set 'winonly' is not for linux"):
+        Catalog.load(tmp_path)
+
+
+def test_real_catalog_web_windows_with_dotnet() -> None:
+    plan = Catalog.load(REAL_CATALOG).compile("web-windows", ["dotnet8"])
+    names = {a["name"]: a for a in plan["apps"]}
+    assert names["dotnet-8.0-runtime"]["version"] == "8.0.34"
+    assert names["dotnet-8.0-runtime"]["source"] == "appset:dotnet8"
+    assert names["7zip"]["source"] == "profile"
+    encode_plan(plan)
