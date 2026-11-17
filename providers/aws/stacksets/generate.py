@@ -64,7 +64,7 @@ def linux_document(installer: str, ansible_lock: str) -> dict[str, Any]:
     }
 
 
-def windows_document(installer: str) -> dict[str, Any]:
+def windows_document(installer: str, dsc_module: str) -> dict[str, Any]:
     return {
         "schemaVersion": "2.2",
         "description": "Patchgate bootstrap for Windows: applies an install plan with the core installer.",
@@ -83,6 +83,9 @@ def windows_document(installer: str) -> dict[str, Any]:
                         f"$installer = @'\n{installer}\n'@",
                         "Set-Content -Path (Join-Path $dir 'Install-PatchgatePlan.ps1') "
                         "-Value $installer -Encoding UTF8",
+                        f"$dscModule = @'\n{dsc_module}\n'@",
+                        "Set-Content -Path (Join-Path $dir 'PatchgateDsc.psm1') "
+                        "-Value $dscModule -Encoding UTF8",
                         "& (Join-Path $dir 'Install-PatchgatePlan.ps1') -PlanBase64 '{{ Plan }}'",
                         "exit $LASTEXITCODE",
                     ],
@@ -187,9 +190,10 @@ def documents() -> dict[str, dict[str, Any]]:
     linux = (scripts / "linux" / "patchgate_install.py").read_text()
     ansible_lock = (scripts / "linux" / "ansible-requirements.txt").read_text()
     windows = (scripts / "windows" / "Install-PatchgatePlan.ps1").read_text().replace("\r\n", "\n")
+    dsc_module = (scripts / "windows" / "PatchgateDsc.psm1").read_text().replace("\r\n", "\n")
     return {
         "Patchgate-Bootstrap-Linux": linux_document(linux, ansible_lock),
-        "Patchgate-Bootstrap-Windows": windows_document(windows),
+        "Patchgate-Bootstrap-Windows": windows_document(windows, dsc_module),
         DRIFT_DOCUMENT: drift_document(),
     }
 

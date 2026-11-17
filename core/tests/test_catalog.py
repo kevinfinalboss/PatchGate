@@ -229,3 +229,32 @@ def test_every_real_control_has_cis_reference_and_fits_in_plans() -> None:
     assert all(c["metadata"].get("references", {}).get("cis") for c in catalog.controls.values())
     for plan in catalog.compile_all().values():
         encode_plan(plan)  # raises if a profile outgrows the transport limit
+
+
+@pytest.mark.parametrize(
+    ("profile_name", "engine"), [("cis-linux", "ansible"), ("cis-windows", "dsc")]
+)
+def test_baseline_profiles_compile_the_baseline_not_controls(
+    profile_name: str, engine: str
+) -> None:
+    hardening = Catalog.load(REAL_CATALOG).compile(profile_name)["hardening"]
+    assert hardening["engine"] == engine
+    assert "controls" not in hardening
+    assert hardening["baseline"]
+
+
+def test_baseline_engine_must_match_platform() -> None:
+    doc = {
+        "apiVersion": "patchgate.io/v1alpha1",
+        "kind": "Baseline",
+        "metadata": {"name": "x", "description": "d"},
+        "spec": {
+            "engine": "dsc",
+            "platform": "linux",
+            "modules": [
+                {"name": "M", "version": "1.0", "source": "https://e.com/m", "sha256": "a" * 64}
+            ],
+            "resource": {"module": "M", "name": "R"},
+        },
+    }
+    assert validate_document(doc)

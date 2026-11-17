@@ -55,8 +55,10 @@ Each phase ends with: working code, updated docs, an ADR for its main decision a
 - [x] Spoke template delivered from a versioned S3 artifacts bucket
 - [x] Verified in the lab: full CIS L1 applied at bootstrap in ~5.5 min; re-run reports 198/198 rules compliant (idempotent); SSM access preserved
 
-### 3c — DSC engine (Windows)
-- [ ] `engine: dsc` with baseline configurations; same evidence format
+### 3c — DSC engine (Windows) ⏳
+- [x] `engine: dsc` baselines: CISDSC 4.0.1 (CIS Windows Server 2022 L1) with AuditPolicyDsc/SecurityPolicyDsc pinned by sha256
+- [x] Safe .nupkg extraction, LCM in ApplyOnly (Patchgate drives drift), per-CIS-rule evidence from Test-DscConfiguration before/after, reboot signalling
+- [ ] Verified in the lab
 
 ## Phase 4 — Patching with approval
 

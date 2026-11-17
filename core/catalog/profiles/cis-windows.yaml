@@ -1,0 +1,15 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Profile
+metadata:
+  name: cis-windows
+  description: Windows Server 2022 hardened with the full CIS Level 1 benchmark (dsc engine).
+spec:
+  platform: windows
+  agents: [cloudwatch-agent, microsoft-defender]
+  hardening:
+    engine: dsc
+    baseline: windows2022-cis-level1
+  drift:
+    interval: 6h
+    mode: enforce
+  ring: 0

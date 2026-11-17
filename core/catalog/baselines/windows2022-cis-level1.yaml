@@ -1,0 +1,35 @@
+apiVersion: patchgate.io/v1alpha1
+kind: Baseline
+metadata:
+  name: windows2022-cis-level1
+  description: CIS Microsoft Windows Server 2022 Member Server Level 1 via the CISDSC module.
+  references:
+    benchmark: CIS Microsoft Windows Server 2022 Benchmark (Member Server, 21H2)
+    upstream: https://www.powershellgallery.com/packages/CISDSC
+spec:
+  engine: dsc
+  platform: windows
+  # Module versions must match what the composite resource imports (AuditPolicyDSC 1.4.0.0,
+  # SecurityPolicyDSC 2.10.0.0). Every package is verified by sha256 before installation.
+  modules:
+    - name: CISDSC
+      version: 4.0.1
+      source: https://www.powershellgallery.com/api/v2/package/CISDSC/4.0.1
+      sha256: bf5bd09e0289f5733ee88abb6e038fea11802a00ca3188a3aad30f92b998534b
+    - name: AuditPolicyDsc
+      version: 1.4.0.0
+      source: https://www.powershellgallery.com/api/v2/package/AuditPolicyDsc/1.4.0.0
+      sha256: 6754aa6b20322ad4ab90faba310e583b6a13288940dd96594b75fcc712a1bcbb
+    - name: SecurityPolicyDsc
+      version: 2.10.0.0
+      source: https://www.powershellgallery.com/api/v2/package/SecurityPolicyDsc/2.10.0.0
+      sha256: b64c2777343f19ae2ba2fcc2a8981420d61b0993bd428c005eceef8293daeadd
+  resource:
+    module: CISDSC
+    name: CIS_Microsoft_Windows_Server_2022_Member_Server_Release_21H2
+  parameters:
+    LevelOne: true
+    LevelTwo: false
+  # Rules that rename accounts or set a logon banner are skipped automatically by the module
+  # unless values are provided; add documented exceptions here (CIS rule IDs).
+  exclude: []

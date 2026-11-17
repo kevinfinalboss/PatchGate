@@ -89,9 +89,10 @@
             "engine": {
               "enum": [
                 "controls",
-                "ansible"
+                "ansible",
+                "dsc"
               ],
-              "description": "controls = native engine; ansible = a Baseline from catalog/baselines. 'dsc' arrives in Phase 3c."
+              "description": "controls = native engine; ansible (Linux) / dsc (Windows) = a Baseline from catalog/baselines."
             },
             "level": {
               "enum": [
@@ -120,7 +121,10 @@
               "if": {
                 "properties": {
                   "engine": {
-                    "const": "ansible"
+                    "enum": [
+                      "ansible",
+                      "dsc"
+                    ]
                   }
                 }
               },

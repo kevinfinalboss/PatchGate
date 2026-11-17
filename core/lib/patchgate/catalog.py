@@ -33,6 +33,7 @@ KINDS = ("Agent", "Profile", "Control", "Baseline")
 # Hardening levels are cumulative: a profile at level N gets every control with level <= N.
 LEVELS = {"baseline": 0, "cis-level1": 1}
 DEFAULT_DRIFT = {"interval": "30m", "mode": "enforce"}
+BASELINE_ENGINES = ("ansible", "dsc")  # engines that run a Baseline instead of Control documents
 
 
 class CatalogError(ValueError):
@@ -187,7 +188,7 @@ class Catalog:
         hardening = spec.get("hardening")
         if not hardening:
             return None
-        if hardening["engine"] == "ansible":
+        if hardening["engine"] in BASELINE_ENGINES:
             baseline = self.baselines[hardening["baseline"]]
             return {
                 "engine": "ansible",

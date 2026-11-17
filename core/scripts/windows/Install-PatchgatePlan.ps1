@@ -43,6 +43,7 @@ $ComplianceFile = Join-Path $Root 'compliance.json'     # evidence: last result 
 $DriftEventFile = Join-Path $Root 'drift-event.json'    # picked up and published by the provider
 $DriftIntervals = @{ '30m' = 1800; '1h' = 3600; '2h' = 7200; '6h' = 21600; '12h' = 43200; '24h' = 86400 }
 $DriftSlackSeconds = 120
+$script:HardeningRebootRequired = $false
 
 # Chocolatey is bootstrapped from its pinned package, never from a remote install script.
 $ChocoVersion = '2.7.5'
@@ -246,12 +247,29 @@ function Install-Step {
 }
 
 function Invoke-Hardening {
-    # The 'controls' hardening engine. Returns one result per control:
+    # Run the profile's hardening engine and record evidence. Returns one result per control:
     # compliant | remediated | non-compliant (audit) | failed (remediation did not fix it).
     param($Hardening, [string]$Mode)
     $results = @()
     if ($null -eq $Hardening -or $Hardening -is [string]) { return $results }
-    if ($Hardening.engine -ne 'controls') { throw "unsupported hardening engine: $($Hardening.engine)" }
+    switch ($Hardening.engine) {
+        'controls' { $results = @(Invoke-ControlsEngine -Hardening $Hardening -Mode $Mode) }
+        'dsc' { $results = @(Invoke-DscEngine -Hardening $Hardening -Mode $Mode) }
+        default { throw "unsupported hardening engine: $($Hardening.engine)" }
+    }
+    Write-JsonFile -Path $ComplianceFile -Data ([ordered]@{
+            engine    = $Hardening.engine
+            level     = (Get-Prop $Hardening 'level' (Get-Prop $Hardening 'baseline' ''))
+            mode      = $Mode
+            checkedAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            controls  = $results
+        })
+    return $results
+}
+
+function Invoke-ControlsEngine {
+    param($Hardening, [string]$Mode)
+    $results = @()
     foreach ($control in $Hardening.controls) {
         if ((Invoke-PlanScript -Script $control.check) -eq 0) {
             $status = 'compliant'
@@ -267,12 +285,37 @@ function Invoke-Hardening {
         Write-PatchgateLog ("control {0,-32} {1}" -f $control.name, $status)
         $results += [ordered]@{ control = $control.name; cis = (Get-Prop $control 'cis' ''); status = $status }
     }
-    Write-JsonFile -Path $ComplianceFile -Data ([ordered]@{
-            level     = $Hardening.level
-            mode      = $Mode
-            checkedAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-            controls  = $results
-        })
+    return $results
+}
+
+function Invoke-DscEngine {
+    # Pinned DSC modules + baseline configuration applied by the LCM (see PatchgateDsc.psm1).
+    param($Hardening, [string]$Mode)
+    Import-Module (Join-Path $PSScriptRoot 'PatchgateDsc.psm1') -Force
+    $modulesRoot = Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'
+    $work = Join-Path $env:TEMP ("patchgate-dsc-{0}" -f [guid]::NewGuid())
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    try {
+        foreach ($module in $Hardening.modules) {
+            $package = Get-VerifiedDownload -Url $module.source -Sha256 $module.sha256 `
+                -Destination (Join-Path $work "$($module.name).nupkg")
+            [void](Install-PatchgateModule -Name $module.name -Version $module.version -Package $package -ModulesRoot $modulesRoot)
+        }
+        Write-PatchgateLog "applying DSC baseline $($Hardening.baseline) (mode $Mode)"
+        $outcome = Invoke-PatchgateDscBaseline -Baseline $Hardening -Mode $Mode -WorkDir $work
+    }
+    finally {
+        Remove-Item -Path $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($outcome.rebootRequired) {
+        Write-PatchgateLog 'DSC baseline requires a reboot to complete' 'WARN'
+        $script:HardeningRebootRequired = $true
+    }
+    $results = @($outcome.results)
+    Write-PatchgateLog ("dsc baseline {0}: {1}" -f $Hardening.baseline, ((Get-Summary $results).GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' ')
+    foreach ($r in $results) {
+        if ($r.status -in 'failed', 'non-compliant') { Write-PatchgateLog ("rule {0,-10} {1,-13} {2}" -f $r.cis, $r.status, $r.title) }
+    }
     return $results
 }
 
@@ -443,5 +486,5 @@ Save-State @{
 }
 Write-PatchgateLog "SUCCESS: profile $($plan.profile) applied"
 Write-Output (@{ patchgate = @{ profile = $plan.profile; digest = $plan.digest; steps = $results; hardening = $hardeningSummary } } | ConvertTo-Json -Depth 5 -Compress)
-if ($rebootNeeded) { exit $RebootExitCode }
+if ($rebootNeeded -or $script:HardeningRebootRequired) { exit $RebootExitCode }
 exit 0
