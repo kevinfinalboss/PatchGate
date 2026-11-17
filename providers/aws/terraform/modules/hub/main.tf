@@ -109,6 +109,28 @@ resource "aws_iam_role_policy" "events" {
   })
 }
 
+resource "aws_cloudwatch_event_rule" "tag_changes" {
+  name           = "patchgate-replan-on-tag-change"
+  description    = "Re-plan an instance when its Patchgate profile or app sets change."
+  event_bus_name = aws_cloudwatch_event_bus.hub.name
+  event_pattern = jsonencode({
+    source        = ["aws.tag"]
+    "detail-type" = ["Tag Change on Resource"]
+    detail = {
+      service            = ["ec2"]
+      "resource-type"    = ["instance"]
+      "changed-tag-keys" = ["Patchgate:Managed", "Patchgate:Profile", "Patchgate:AppSets"]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "tag_changes" {
+  rule           = aws_cloudwatch_event_rule.tag_changes.name
+  event_bus_name = aws_cloudwatch_event_bus.hub.name
+  arn            = aws_sfn_state_machine.bootstrap.arn
+  role_arn       = aws_iam_role.events.arn
+}
+
 resource "aws_cloudwatch_event_target" "bootstrap" {
   rule           = aws_cloudwatch_event_rule.ec2_running.name
   event_bus_name = aws_cloudwatch_event_bus.hub.name

@@ -95,6 +95,9 @@ def windows_document(installer: str, dsc_module: str) -> dict[str, Any]:
     }
 
 
+# Changing these tags on a running instance re-plans it (Patchgate's own Bootstrap* tags do not).
+TRIGGER_TAG_KEYS = ["Patchgate:Managed", "Patchgate:Profile", "Patchgate:AppSets"]
+
 DRIFT_DOCUMENT = "Patchgate-Drift"
 # Every 30 minutes; the executor skips runs until the profile's interval is due.
 DRIFT_SCHEDULE = "cron(0/30 * * * ? *)"
@@ -330,6 +333,29 @@ def template(docs: dict[str, dict[str, Any]]) -> dict[str, Any]:
                     "source": ["aws.ec2"],
                     "detail-type": ["EC2 Instance State-change Notification"],
                     "detail": {"state": ["running"]},
+                },
+                "Targets": [
+                    {
+                        "Id": "hub",
+                        "Arn": {"Ref": "HubEventBusArn"},
+                        "RoleArn": {"Fn::GetAtt": ["ForwarderRole", "Arn"]},
+                    }
+                ],
+            },
+        },
+        "ForwardTagChanges": {
+            "Type": "AWS::Events::Rule",
+            "Properties": {
+                "Name": "patchgate-forward-tag-changes",
+                "Description": "Forward Patchgate tag changes on instances to the hub.",
+                "EventPattern": {
+                    "source": ["aws.tag"],
+                    "detail-type": ["Tag Change on Resource"],
+                    "detail": {
+                        "service": ["ec2"],
+                        "resource-type": ["instance"],
+                        "changed-tag-keys": TRIGGER_TAG_KEYS,
+                    },
                 },
                 "Targets": [
                     {

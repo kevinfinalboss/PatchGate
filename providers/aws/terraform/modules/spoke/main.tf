@@ -145,6 +145,27 @@ resource "aws_cloudwatch_event_target" "hub" {
   role_arn = aws_iam_role.forwarder.arn
 }
 
+# Changing Patchgate tags on a running instance re-plans it (Patchgate's own Bootstrap* tags do not).
+resource "aws_cloudwatch_event_rule" "tag_changes" {
+  name        = "patchgate-forward-tag-changes"
+  description = "Forward Patchgate tag changes on instances to the hub."
+  event_pattern = jsonencode({
+    source        = ["aws.tag"]
+    "detail-type" = ["Tag Change on Resource"]
+    detail = {
+      service            = ["ec2"]
+      "resource-type"    = ["instance"]
+      "changed-tag-keys" = ["Patchgate:Managed", "Patchgate:Profile", "Patchgate:AppSets"]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "tag_changes" {
+  rule     = aws_cloudwatch_event_rule.tag_changes.name
+  arn      = var.hub_event_bus_arn
+  role_arn = aws_iam_role.forwarder.arn
+}
+
 # ------------------------------------------------------------------ SSM documents
 
 resource "aws_ssm_document" "bootstrap" {

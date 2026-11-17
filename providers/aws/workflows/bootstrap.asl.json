@@ -1,7 +1,22 @@
 {
-  "Comment": "Patchgate Day-1 bootstrap: resolve the instance, wait for SSM, apply its profile, record the result.",
-  "StartAt": "Init",
+  "Comment": "Patchgate bootstrap: on launch or when Patchgate tags change, resolve the instance, wait for SSM, apply its plan, record the result.",
+  "StartAt": "WhichEvent",
   "States": {
+    "WhichEvent": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.detail-type", "StringEquals": "Tag Change on Resource", "Next": "InitFromTagChange" }],
+      "Default": "Init"
+    },
+    "InitFromTagChange": {
+      "Type": "Pass",
+      "Parameters": {
+        "accountId.$": "$.account",
+        "region.$": "$.region",
+        "instanceId.$": "States.ArrayGetItem(States.StringSplit($.resources[0], '/'), 1)",
+        "retry": { "count": 0 }
+      },
+      "Next": "Resolve"
+    },
     "Init": {
       "Type": "Pass",
       "Parameters": {
