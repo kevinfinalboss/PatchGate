@@ -65,12 +65,15 @@ Each phase ends with: working code, updated docs, an ADR for its main decision a
 Application updates, hardening changes and OS patches are the same problem: changes rolled out in
 waves with approval. Phase 4 builds that once and reuses it for everything.
 
-### 4a — Application lifecycle ⏭️
-- [ ] `AppSet` catalog kind: reusable bundles of apps (Chocolatey on Windows, dnf/apt on Linux)
-- [ ] Instances compose a profile with app sets via the `Patchgate:AppSets` tag; profiles allow-list which sets they accept
-- [ ] `ensure: present | latest | absent`, pinned versions, `prune` (removes only what Patchgate installed)
-- [ ] Drift reconciles apps: reinstall, fix versions, uninstall
-- [ ] Tag changes on running instances trigger re-planning (no restart needed)
+### 4a — Application lifecycle and configuration store ⏳
+- [x] `AppSet` catalog kind: reusable bundles of apps (Chocolatey on Windows, dnf/apt on Linux)
+- [x] Instances compose a profile with app sets via the `Patchgate:AppSets` tag; profiles allow-list which sets they accept
+- [x] `ensure: present | latest | absent`, pinned versions, `prune` (removes only what Patchgate installed)
+- [x] Drift reconciles apps: reinstall, fix versions, uninstall
+- [x] Tag changes on running instances trigger re-planning (no restart needed)
+- [x] Configuration in DynamoDB with history, rollback and invalid-config alerts (ADR 0008)
+- [x] `patchgate-cli` (Instance Scheduler style): validated writes, copy/delete/history/rollback, instance app sets
+- [ ] Verified in the lab
 
 ### 4b — Rollouts with rings and approval
 - [ ] Catalog changes (apps, hardening) applied to running instances ring by ring

@@ -45,3 +45,25 @@ lifecycle {
 ```
 
 To opt an instance in, set `Patchgate:Managed = "true"` and optionally `Patchgate:Profile` (defaults: `base-linux` / `base-windows`), and use the `Patchgate-Instance` instance profile.
+
+## Managing configuration with patchgate-cli
+
+Configuration (profiles, app sets, agents, controls, baselines) lives in the `patchgate-config`
+DynamoDB table in the hub account; instances only carry tags. Install with `pip install -e .`.
+
+```bash
+# --config-profile: hub account (configuration); --profile: account that owns the instance
+patchgate-cli --config-profile hub list appsets
+patchgate-cli --config-profile hub describe profile web-windows
+patchgate-cli --config-profile hub apply -f my-appset.yaml --dry-run
+patchgate-cli --config-profile hub copy appset dotnet8 dotnet8-team-a   # customise a built-in
+patchgate-cli --config-profile hub history appset dotnet8-team-a
+patchgate-cli --config-profile hub rollback appset dotnet8-team-a --version 2
+
+patchgate-cli --config-profile hub --profile dev instance show i-0123456789abcdef0
+patchgate-cli --config-profile hub --profile dev instance appsets i-0123456789abcdef0 --add dotnet8
+```
+
+Every write is validated (schema and references). Built-in documents (`managedBy = patchgate`) are
+re-applied by each release; copy them to customise. Direct console edits are allowed, but invalid
+documents are refused by the resolver and reported by email.

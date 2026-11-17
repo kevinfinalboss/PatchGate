@@ -41,6 +41,7 @@ def run(tmp_path: Path, encoded: str | None, *extra: str) -> tuple[int, dict[str
         "ProgramData": str(tmp_path / "pd"),
         "TEMP": str(tmp_path / "tmp"),
         "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT": "1",
+        "PATCHGATE_INSTALLER_RETRY_SECONDS": "0",
     }
     (tmp_path / "tmp").mkdir(exist_ok=True)
     assert PWSH is not None
@@ -317,4 +318,12 @@ def test_legacy_chocolatey_field_still_works(tmp_path: Path) -> None:
     doc = json.loads(base64.b64decode(plan()))
     doc["chocolatey"] = [{"name": "7zip"}]
     code, _, packages = run_apps(tmp_path, base64.b64encode(json.dumps(doc).encode()).decode())
+    assert code == 0 and packages == {"7zip": "9.9"}
+
+
+def test_busy_windows_installer_is_retried(tmp_path: Path) -> None:
+    """Exit 1618 right after boot (seen in the lab) must be retried, not fail the bootstrap."""
+    (tmp_path / "busy.txt").write_text("2")
+    app = {"name": "7zip", "source": "profile", "prune": False}
+    code, _, packages = run_apps(tmp_path, with_apps(app))
     assert code == 0 and packages == {"7zip": "9.9"}

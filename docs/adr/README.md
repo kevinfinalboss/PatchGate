@@ -16,6 +16,7 @@ We record significant decisions as ADRs: short documents capturing the context, 
 | [0002](0002-hub-and-spoke-multi-account.md) | Hub-and-spoke multi-account model | Accepted |
 | [0003](0003-native-orchestration-per-provider.md) | Native orchestration per provider | Accepted |
 | [0004](0004-event-driven-bootstrap.md) | Event-driven bootstrap instead of user data | Accepted |
-| [0005](0005-declarative-agent-catalog.md) | Declarative agent catalog in Git | Accepted |
+| [0005](0005-declarative-agent-catalog.md) | Declarative agent catalog in Git | Storage superseded by 0008 |
 | [0006](0006-org-wide-hub-access-and-stackset-spokes.md) | Organization-wide hub access and StackSet-managed spokes | Accepted |
 | [0007](0007-pluggable-hardening-engines.md) | Pluggable hardening engines, starting with a native controls engine | Accepted |
+| [0008](0008-configuration-store-in-dynamodb.md) | Configuration store in DynamoDB, managed like AWS Instance Scheduler | Accepted |

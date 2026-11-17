@@ -39,7 +39,9 @@ Before editing files under these folders, read their own AGENTS.md (closest file
 | IaC security scan | `checkov -d providers/aws` |
 | Catalog validation | `make validate-catalog` (JSON Schema against `core/catalog/**`) |
 | PowerShell lint | `Invoke-ScriptAnalyzer -Recurse core/scripts/windows` |
-| Catalog CLI | `python -m patchgate validate` / `python -m patchgate compile <profile>` |
+| Catalog CLI | `python -m patchgate validate` / `compile <profile>` / `export` (seed); `make seed` after catalog changes |
+| Config/instance CLI | `patchgate-cli --help` (DynamoDB configuration store, see providers/aws/README.md) |
+| Lambda layer | `make layer` (lock regenerated inside `public.ecr.aws/lambda/python:3.12`) |
 | Windows installer tests | need `pwsh`; set `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1` if libicu is missing |
 
 ## Stack and conventions

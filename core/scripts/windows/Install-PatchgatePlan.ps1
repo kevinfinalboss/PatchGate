@@ -54,6 +54,8 @@ $ChocoUrl = "https://packages.chocolatey.org/chocolatey.$ChocoVersion.nupkg"
 # Child scripts run with the same PowerShell executable as this installer (5.1 or 7).
 $PowerShellExe = (Get-Process -Id $PID).Path
 $RebootExitCode = 3010
+$InstallerBusyExitCode = 1618
+$InstallerBusyDelaySeconds = if ($env:PATCHGATE_INSTALLER_RETRY_SECONDS) { [int]$env:PATCHGATE_INSTALLER_RETRY_SECONDS } else { 30 }
 $SuccessCodes = @(0, 1641, 3010)
 $ValidateAttempts = 5
 $ValidateDelaySeconds = 6
@@ -180,6 +182,19 @@ function Get-Chocolatey {
     return $choco
 }
 
+function Invoke-WithInstallerRetry {
+    # Windows Installer allows one installation at a time; right after boot EC2Launch, the SSM
+    # agent or Windows Update may hold it (exit 1618). Wait and retry instead of failing.
+    param([string]$Description, [scriptblock]$Action, [int]$Attempts = 10, [int]$DelaySeconds = $InstallerBusyDelaySeconds)
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $code = & $Action
+        if ($code -ne $InstallerBusyExitCode) { return $code }
+        Write-PatchgateLog "$Description`: Windows Installer busy (1618), retry $attempt/$Attempts in ${DelaySeconds}s" 'WARN'
+        Start-Sleep -Seconds $DelaySeconds
+    }
+    return $code
+}
+
 function Get-ChocoVersion {
     # Installed version of a Chocolatey package, or $null.
     param([string]$Name)
@@ -208,7 +223,9 @@ function Invoke-ChocoChange {
         'remove' { $arguments = @('uninstall', $Name, '-y', '--no-progress', '--limit-output') }
         default { throw "unknown app action $Action" }
     }
-    $code = Invoke-Native -FilePath $choco -Arguments $arguments
+    $code = Invoke-WithInstallerRetry -Description "choco $Action $Name" -Action {
+        Invoke-Native -FilePath $choco -Arguments $arguments
+    }
     if ($SuccessCodes -notcontains $code) { throw "choco $Action $Name failed (exit $code)" }
     return $code
 }
@@ -333,14 +350,15 @@ function Install-Step {
             $file = Get-VerifiedDownload -Url $Step.source -Sha256 $Step.sha256 `
                 -Destination (Join-Path $WorkDir ("{0}.{1}" -f $Step.agent, $Step.method))
             $extra = if ($props -contains 'args') { $Step.args } else { '' }
-            if ($Step.method -eq 'msi') {
-                $process = Start-Process -FilePath 'msiexec.exe' -Wait -PassThru `
-                    -ArgumentList ('/i "{0}" /qn /norestart {1}' -f $file, $extra)
+            $code = Invoke-WithInstallerRetry -Description $Step.agent -Action {
+                if ($Step.method -eq 'msi') {
+                    (Start-Process -FilePath 'msiexec.exe' -Wait -PassThru `
+                        -ArgumentList ('/i "{0}" /qn /norestart {1}' -f $file, $extra)).ExitCode
+                }
+                else {
+                    (Start-Process -FilePath $file -ArgumentList $extra -Wait -PassThru).ExitCode
+                }
             }
-            else {
-                $process = Start-Process -FilePath $file -ArgumentList $extra -Wait -PassThru
-            }
-            $code = $process.ExitCode
             if ($SuccessCodes -notcontains $code) { throw "$($Step.agent) installer exited with $code" }
         }
         'script' {

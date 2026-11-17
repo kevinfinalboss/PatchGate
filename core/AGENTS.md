@@ -14,13 +14,14 @@ Cloud-agnostic part of Patchgate. Root rules in [/AGENTS.md](../AGENTS.md) still
 |---|---|---|
 | `schemas/` | JSON Schemas for agent, profile and patch-policy | Breaking change ⇒ bump `apiVersion` + ADR |
 | `catalog/agents/` | One YAML file per installable agent | File name = `metadata.name`; `sha256` required for downloads |
-| `catalog/profiles/` | Profiles combining agents, Chocolatey packages, hardening level | Referenced by the `Patchgate:Profile` tag |
+| `catalog/profiles/` | Profiles combining agents, apps, allowed app sets, hardening | Referenced by the `Patchgate:Profile` tag |
+| `catalog/appsets/` | Reusable app bundles requested with the `Patchgate:AppSets` tag | Pin versions for anything that runs in production |
 | `catalog/policies/` | Patch policies: rings, windows, approvers, rollback criteria | |
 | `catalog/controls/<os>/` | Hardening controls for the `controls` engine (ADR 0007) | `check` exits 0 when compliant; `remediate` idempotent and safe to re-run; CIS reference required; never lock out SSH/RDP/SSM |
 | `scripts/linux/` | `patchgate_install.py` (Python 3.9+ stdlib only) and any helper shell scripts | No third-party imports, no cloud APIs, idempotent; shell helpers `set -euo pipefail` + shellcheck |
 | `scripts/windows/` | `Install-PatchgatePlan.ps1` (Windows PowerShell 5.1+) and `PatchgateDsc.psm1` (dsc engine; DSC cmdlets stubbed in tests) | `Stop` on error, PSScriptAnalyzer clean, idempotent; exit `3010` to request reboot; log with `Write-PatchgateLog` (never `Write-Output` inside functions) |
 | `catalog/baselines/` | Third-party content for the `ansible` (Linux) and `dsc` (Windows) engines | Every archive/module pinned by sha256 |
-| `lib/` | Python: ring selection, approval rules, compliance math, CloudEvents models | Pure functions, 100% unit-testable |
+| `lib/` | `plan.py` (stdlib only, also runs in Lambda), `schema.py`, `catalog.py` (YAML) | `plan.py` must not import third-party packages |
 | `tests/` | Unit tests for `lib/` and catalog validation | No network, no cloud mocks needed |
 
 ## Catalog conventions
