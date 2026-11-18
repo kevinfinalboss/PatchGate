@@ -24,18 +24,14 @@ def create_tables() -> None:
     for name, hash_key, range_key in (
         ("patchgate-config", "kind", "name"),
         ("patchgate-config-history", "id", "changeId"),
+        ("patchgate-releases", "id", None),
     ):
+        keys = [(hash_key, "HASH")] + ([(range_key, "RANGE")] if range_key else [])
         client.create_table(
             TableName=name,
             BillingMode="PAY_PER_REQUEST",
-            AttributeDefinitions=[
-                {"AttributeName": hash_key, "AttributeType": "S"},
-                {"AttributeName": range_key, "AttributeType": "S"},
-            ],
-            KeySchema=[
-                {"AttributeName": hash_key, "KeyType": "HASH"},
-                {"AttributeName": range_key, "KeyType": "RANGE"},
-            ],
+            AttributeDefinitions=[{"AttributeName": k, "AttributeType": "S"} for k, _ in keys],
+            KeySchema=[{"AttributeName": k, "KeyType": t} for k, t in keys],
         )
 
 
@@ -251,3 +247,45 @@ def test_reconcile_waits_until_the_command_finishes(
     invocation = cli.Cli(args).wait_for_command(fake, "cmd-1", "i-1")
     assert invocation["Status"] == "Failed" and fake.calls == 3
     assert cli.step_output(fake, "cmd-1", "i-1", "driftWindows") == "driftWindows out"
+
+
+def approver_group(name: str) -> dict[str, object]:
+    return {
+        "apiVersion": "patchgate.io/v1alpha1",
+        "kind": "ApproverGroup",
+        "metadata": {"name": name, "description": "test"},
+        "spec": {"members": [f"{name}@example.com"]},
+    }
+
+
+def test_account_set_validates_groups_and_ring(aws: ConfigStore, tmp_path: Path) -> None:
+    code, _, err = run("account", "set", "123456789012", "--ring", "1", "--approvers", "platform")
+    assert code == 1 and "unknown approver group 'platform'" in err
+    for group in ("platform", "payments"):
+        assert run("apply", "-f", write(tmp_path, approver_group(group)))[0] == 0
+    code, _, err = run("account", "set", "123456789012", "--ring", "5", "--approvers", "platform")
+    assert code == 1 and "ring 5 is not in rollout policy" in err
+    code, out, _ = run(
+        "account", "set", "123456789012", "--ring", "1", "--approvers", "platform",
+        "--allow", "payments",
+    )  # fmt: skip
+    assert code == 0 and "ring 1, approvers platform (also allowed: payments)" in out
+    assert "123456789012" in run("list", "accounts")[1]
+    code, _, err = run("account", "set", "12345", "--ring", "1", "--approvers", "platform")
+    assert code == 1 and "invalid document" in err
+
+
+def test_changing_a_gated_document_keeps_instances_on_the_current_revision(
+    aws: ConfigStore, tmp_path: Path
+) -> None:
+    from patchgate_aws.store import ReleaseStore
+
+    assert run("apply", "-f", write(tmp_path, appset("tools", "7zip")))[0] == 0
+    first = aws.get("AppSet", "tools")
+    assert first is not None
+    assert ReleaseStore("patchgate-releases").get("AppSet", "tools") == {}  # new: served as is
+    code, out, _ = run("apply", "-f", write(tmp_path, appset("tools", "7zip", "git")))
+    assert code == 0 and "pending: instances keep version 1" in out
+    assert ReleaseStore("patchgate-releases").get("AppSet", "tools") == {"*": first.revision}
+    run("apply", "-f", write(tmp_path, appset("tools", "git")))
+    assert ReleaseStore("patchgate-releases").get("AppSet", "tools") == {"*": first.revision}

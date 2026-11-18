@@ -63,7 +63,17 @@ patchgate-cli --config-profile hub rollback appset dotnet8-team-a --version 2
 patchgate-cli --config-profile hub --profile dev instance show i-0123456789abcdef0
 patchgate-cli --config-profile hub --profile dev instance appsets i-0123456789abcdef0 --add dotnet8
 patchgate-cli --profile dev instance reconcile i-0123456789abcdef0   # drift check now
+
+# Rollouts (ADR 0010): approver groups, and each account's ring and approver groups
+patchgate-cli --config-profile hub apply -f platform-approvers.yaml    # kind: ApproverGroup
+patchgate-cli --config-profile hub account set 111111111111 --ring 0 --approvers platform
+patchgate-cli --config-profile hub account set 222222222222 --ring 1 --approvers platform --allow payments
 ```
+
+Profiles and app sets are **gated**: `apply` keeps instances on the current revision until a
+rollout releases the new one ring by ring (the CLI prints `pending`). Accounts and approver
+groups (people's emails) live only in the configuration table, never in Git. Instances in
+unregistered accounts are treated as the last (most protected) ring.
 
 `instance reconcile` runs the `Patchgate-Drift` document with `Force=true`: it ignores the
 profile's interval and maintenance window, corrects according to the per-category modes, waits

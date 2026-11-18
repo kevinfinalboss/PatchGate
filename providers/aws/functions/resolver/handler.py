@@ -5,6 +5,10 @@ instance, reads its tags and SSM status, loads the profile and requested app set
 configuration table (DynamoDB), validates them and composes the install plan at run time.
 Invalid or inconsistent configuration is refused, never applied.
 
+Profiles and app sets are served as released to the instance's ring and approver group
+(ADR 0010): the ring and group come from the account settings, optionally overridden by the
+Patchgate:Ring / Patchgate:Approvers tags where the account allows it.
+
 Returns a flat dict consumed by the Step Functions bootstrap workflow. Every key is always
 present so Choice states never hit a missing path.
 """
@@ -21,8 +25,9 @@ from typing import Any
 import boto3
 
 from patchgate.plan import CatalogError, encode_plan
-from patchgate.schema import validate_document
-from patchgate_aws.store import ConfigStore
+from patchgate.rollout import AccountSettings, Placement, Target, place
+from patchgate_aws.store import ConfigStore, ReleaseStore, StoreError
+from patchgate_aws.validation import validate
 
 LOG = logging.getLogger()
 LOG.setLevel(logging.INFO)
@@ -31,6 +36,10 @@ EXECUTION_ROLE_NAME = os.environ.get("EXECUTION_ROLE_NAME", "Patchgate-Execution
 PARTITION = os.environ.get("AWS_PARTITION", "aws")
 CONFIG_TABLE = os.environ.get("PATCHGATE_CONFIG_TABLE", "patchgate-config")
 LOCKS_TABLE = os.environ.get("PATCHGATE_LOCKS_TABLE", "patchgate-locks")
+HISTORY_TABLE = os.environ.get("PATCHGATE_HISTORY_TABLE", "patchgate-config-history")
+RELEASES_TABLE = os.environ.get("PATCHGATE_RELEASES_TABLE", "patchgate-releases")
+ROLLOUT_POLICY = os.environ.get("PATCHGATE_ROLLOUT_POLICY", "default")
+DEFAULT_APPROVERS = os.environ.get("PATCHGATE_DEFAULT_APPROVERS", "platform")
 LOCK_TTL_SECONDS = 2 * 3600  # a crashed execution never blocks an instance for longer
 
 TAG_MANAGED = "Patchgate:Managed"
@@ -38,6 +47,8 @@ TAG_PROFILE = "Patchgate:Profile"
 TAG_APPSETS = "Patchgate:AppSets"
 TAG_STATUS = "Patchgate:BootstrapStatus"
 TAG_DIGEST = "Patchgate:BootstrapDigest"
+TAG_RING = "Patchgate:Ring"
+TAG_APPROVERS = "Patchgate:Approvers"
 
 DEFAULT_PROFILES = {"linux": "base-linux", "windows": "base-windows"}
 DOCUMENTS = {"linux": "Patchgate-Bootstrap-Linux", "windows": "Patchgate-Bootstrap-Windows"}
@@ -59,16 +70,68 @@ def parse_appsets(value: str) -> list[str]:
     return names
 
 
-def compose_plan(store: ConfigStore, profile: str, appsets: list[str], platform: str) -> Any:
+def account_settings(store: ConfigStore, account_id: str) -> dict[str, AccountSettings]:
+    record = store.get("Account", account_id)
+    if record is None or validate(record.document):
+        return {}  # unregistered (or invalid): the last ring, see patchgate.rollout.place
+    spec = record.document["spec"]
+    return {
+        account_id: AccountSettings(
+            ring=spec["ring"],
+            approvers=spec["approvers"],
+            allowed_approvers=frozenset(spec.get("allowedApprovers", [])),
+            allow_ring_tag=spec.get("allowRingTag", False),
+        )
+    }
+
+
+def placement_for(
+    store: ConfigStore, account_id: str, instance_id: str, tags: dict[str, str]
+) -> tuple[Placement | None, list[str]]:
+    """Ring and approver group of the instance; None when no rollout policy is configured."""
+    policy = store.get("RolloutPolicy", ROLLOUT_POLICY)
+    if policy is None:
+        return None, []
+    if validate(policy.document):
+        raise ResolveError(f"rollout policy {ROLLOUT_POLICY!r} is invalid")
+    warnings: list[str] = []
+    approvers_tag = tags.get(TAG_APPROVERS)
+    if approvers_tag is not None and not _NAME.match(approvers_tag):
+        warnings.append(f"{TAG_APPROVERS} {approvers_tag[:64]!r} is not a valid group name")
+        approvers_tag = None
+    target = Target(
+        instance_id=instance_id,
+        account=account_id,
+        profile=tags.get(TAG_PROFILE, ""),
+        ring_tag=tags.get(TAG_RING),
+        approvers_tag=approvers_tag,
+    )
+    placement = place(
+        target, account_settings(store, account_id), policy.document, DEFAULT_APPROVERS
+    )
+    store.gated = frozenset(policy.document["spec"].get("kinds", ["AppSet", "Profile"]))
+    return placement, warnings + list(placement.warnings)
+
+
+def compose_plan(
+    store: ConfigStore,
+    profile: str,
+    appsets: list[str],
+    platform: str,
+    placement: Placement | None = None,
+) -> Any:
     """Load, validate and compile; any problem becomes a ResolveError listing every issue."""
-    library = store.library_for(profile, appsets)
+    try:
+        library = store.library_for(profile, appsets, placement)
+    except StoreError as exc:
+        raise ResolveError(str(exc)) from exc
     if profile not in library.profiles:
         raise ResolveError(f"unknown profile {profile!r}")
     errors = [
         error
         for kind in ("Profile", "Agent", "Control", "Baseline", "AppSet")
         for name, doc in library.bucket(kind).items()
-        for error in validate_document(doc, f"{kind}/{name}")
+        for error in validate(doc, f"{kind}/{name}")
     ]
     errors += library.reference_errors()
     if errors:
@@ -164,6 +227,9 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         "documentParameters": {},
         "lockId": f"{account_id}#{instance_id}",
         "lockBusy": False,
+        "ring": None,
+        "approvers": "",
+        "placementWarnings": [],
     }
 
     session = spoke_session(account_id, region)
@@ -176,7 +242,11 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
     platform = "windows" if instance.get("Platform", "").lower() == "windows" else "linux"
     profile = _require(_PROFILE, tags.get(TAG_PROFILE, DEFAULT_PROFILES[platform]), "profile")
     appsets = parse_appsets(tags.get(TAG_APPSETS, ""))
-    plan, encoded = compose_plan(ConfigStore(CONFIG_TABLE), profile, appsets, platform)
+    store = ConfigStore(
+        CONFIG_TABLE, history_table=HISTORY_TABLE, releases=ReleaseStore(RELEASES_TABLE)
+    )
+    placement, warnings = placement_for(store, account_id, instance_id, tags)
+    plan, encoded = compose_plan(store, profile, appsets, platform, placement)
 
     result.update(
         managed=True,
@@ -190,7 +260,12 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         ssmOnline=ssm_ping_status(session, instance_id) == "Online",
         documentName=DOCUMENTS[platform],
         documentParameters={"Plan": [encoded]},
+        ring=placement.ring if placement else None,
+        approvers=placement.group if placement else "",
+        placementWarnings=warnings,
     )
+    for warning in warnings:
+        LOG.warning("instance %s: %s", instance_id, warning)
     if result["ssmOnline"] and not result["alreadyBootstrapped"]:
         owner = str(event.get("executionName") or "unknown")
         result["lockBusy"] = not acquire_lock(account_id, instance_id, owner)

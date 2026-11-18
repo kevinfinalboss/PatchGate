@@ -38,6 +38,16 @@ def audit(monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
                 {"AttributeName": "changeId", "KeyType": "RANGE"},
             ],
         )
+        for name, keys in (
+            ("patchgate-config", [("kind", "HASH"), ("name", "RANGE")]),
+            ("patchgate-releases", [("id", "HASH")]),
+        ):
+            boto3.client("dynamodb").create_table(
+                TableName=name,
+                BillingMode="PAY_PER_REQUEST",
+                AttributeDefinitions=[{"AttributeName": k, "AttributeType": "S"} for k, _ in keys],
+                KeySchema=[{"AttributeName": k, "KeyType": t} for k, t in keys],
+            )
         topic = boto3.client("sns").create_topic(Name="alerts")["TopicArn"]
         monkeypatch.setenv("PATCHGATE_ALERT_TOPIC", topic)
         spec = importlib.util.spec_from_file_location("audit_handler", HANDLER)
@@ -109,3 +119,55 @@ def test_deletes_are_recorded(audit: ModuleType) -> None:
     assert result == {"records": 1, "invalid": 0}
     item = boto3.resource("dynamodb").Table("history").scan()["Items"][0]
     assert item["event"] == "REMOVE" and item["previous"]
+
+
+def put_default_policy() -> None:
+    from patchgate.catalog import Catalog
+    from patchgate_aws.store import ConfigStore
+
+    catalog = Catalog.load(Path(__file__).resolve().parents[3] / "core" / "catalog")
+    ConfigStore("patchgate-config").put(catalog.policies["default"], "seed")
+
+
+def released() -> dict[str, Any]:
+    item = (
+        boto3.resource("dynamodb").Table("patchgate-releases").get_item(Key={"id": "AppSet#tools"})
+    )
+    return dict(item.get("Item", {}).get("released", {}))
+
+
+def test_gated_change_outside_the_cli_pins_the_previous_revision(audit: ModuleType) -> None:
+    from patchgate.rollout import revision_of
+
+    put_default_policy()
+    v1, v2 = appset([{"name": "jq"}]), appset([{"name": "jq"}, {"name": "git"}])
+    audit.handler({"Records": [record("MODIFY", v2, v1, 2, "console")]})
+    assert released() == {"*": revision_of(v1)}
+    v3 = appset([{"name": "git"}])
+    audit.handler({"Records": [record("MODIFY", v3, v2, 3, "console")]})
+    assert released() == {"*": revision_of(v1)}  # a rollout (or the CLI) already owns it
+
+
+def test_no_pin_without_a_rollout_policy(audit: ModuleType) -> None:
+    v1, v2 = appset([{"name": "jq"}]), appset([{"name": "git"}])
+    audit.handler({"Records": [record("MODIFY", v2, v1, 2, "console")]})
+    assert released() == {}
+
+
+def test_accounts_are_validated_with_the_provider_schema(audit: ModuleType) -> None:
+    def account(spec: dict[str, Any]) -> dict[str, Any]:
+        doc = json.dumps(
+            {
+                "apiVersion": "patchgate.io/v1alpha1",
+                "kind": "Account",
+                "metadata": {"name": "123456789012"},
+                "spec": spec,
+            }
+        )
+        rec = record("INSERT", doc, None, 1, "cli")
+        rec["dynamodb"]["NewImage"]["kind"] = {"S": "Account"}
+        return dict(rec)
+
+    ok = audit.handler({"Records": [account({"ring": 1, "approvers": "platform"})]})
+    bad = audit.handler({"Records": [account({"ring": 12, "approvers": "platform"})]})
+    assert (ok["invalid"], bad["invalid"]) == (0, 1)

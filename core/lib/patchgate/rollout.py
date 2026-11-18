@@ -7,12 +7,15 @@ settings and execute the resulting stages with their own orchestration.
 Vocabulary:
 - **unit**: the approval unit, a ring plus an approver group ("1:payments"). Each unit approves
   its own instances and each unit records the version released to it.
-- **released**: per document, {unit: version} plus "*" for the version every other unit gets
-  (the last version released everywhere). New documents start with {"*": 1}.
+- **revision**: a document's content digest ("sha256:..."). Releases name revisions, not version
+  numbers, so built-in documents re-applied by a release are tracked too.
+- **released**: per document, {unit: revision} plus "*" for the revision every other unit gets
+  (the last one released everywhere). Documents without releases are served as they are.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -150,13 +153,13 @@ class Stage:
 class RolloutPlan:
     kind: str
     name: str
-    version: int
+    revision: str
     stages: list[Stage]
     warnings: list[str]
 
     @property
     def covers_every_ring(self) -> bool:
-        """True when every ring has instances (needed to release the version everywhere)."""
+        """True when every ring has instances (needed to release the revision everywhere)."""
         return all(stage.units for stage in self.stages)
 
     def summary(self) -> str:
@@ -171,13 +174,13 @@ class RolloutPlan:
 def plan_rollout(
     kind: str,
     name: str,
-    version: int,
+    revision: str,
     targets: Iterable[Target],
     accounts: Mapping[str, AccountSettings],
     policy: Document,
     default_group: str,
 ) -> RolloutPlan:
-    """Ordered stages for a new version of a gated document. Rings without instances still get a
+    """Ordered stages for a new revision of a gated document. Rings without instances still get a
     stage (empty) so the provider can report them; they need no approval."""
     if kind not in policy["spec"].get("kinds", list(GATED_KINDS)):
         raise RolloutError(f"{kind} changes are not gated by rollout policy")
@@ -195,22 +198,27 @@ def plan_rollout(
         placement = place(target, accounts, policy, default_group)
         warnings.extend(f"{target.instance_id}: {w}" for w in placement.warnings)
         by_ring[placement.ring].units.setdefault(placement.unit, []).append(target.instance_id)
-    return RolloutPlan(kind, name, version, stages, warnings)
+    return RolloutPlan(kind, name, revision, stages, warnings)
 
 
 # ------------------------------------------------------------------ released versions
 
 
-def version_for(released: Mapping[str, int], placement: Placement) -> int | None:
-    """Version an instance receives: its unit's release, else the version released everywhere."""
+def revision_of(document_json: str) -> str:
+    """Content digest of a stored document (the exact JSON string kept by the store)."""
+    return "sha256:" + hashlib.sha256(document_json.encode()).hexdigest()
+
+
+def revision_for(released: Mapping[str, str], placement: Placement) -> str | None:
+    """Revision an instance receives: its unit's release, else the one released everywhere."""
     return released.get(placement.unit, released.get(ALL_UNITS))
 
 
-def release(released: Mapping[str, int], unit: str, version: int) -> dict[str, int]:
-    return {**released, unit: version}
+def release(released: Mapping[str, str], unit: str, revision: str) -> dict[str, str]:
+    return {**released, unit: revision}
 
 
-def revert(released: Mapping[str, int], unit: str, previous: Mapping[str, int]) -> dict[str, int]:
+def revert(released: Mapping[str, str], unit: str, previous: Mapping[str, str]) -> dict[str, str]:
     """Give a unit back what it had before the rollout started."""
     restored = dict(released)
     if unit in previous:
@@ -220,13 +228,13 @@ def revert(released: Mapping[str, int], unit: str, previous: Mapping[str, int]) 
     return restored
 
 
-def complete(released: Mapping[str, int], version: int, plan: RolloutPlan) -> dict[str, int]:
-    """After a rollout: if every ring had instances and every unit got the version, it becomes
-    the version for everyone (new instances included). Otherwise units keep explicit entries and
-    "*" stays where it was, so instances nobody approved for never receive the new version."""
+def complete(released: Mapping[str, str], revision: str, plan: RolloutPlan) -> dict[str, str]:
+    """After a rollout: if every ring had instances and every unit took the revision, it becomes
+    the revision for everyone (new instances included). Otherwise units keep explicit entries and
+    "*" stays where it was, so instances nobody approved for never receive it."""
     units = [unit for stage in plan.stages for unit in stage.units]
-    if plan.covers_every_ring and all(released.get(u) == version for u in units):
-        return {ALL_UNITS: version}
+    if plan.covers_every_ring and all(released.get(u) == revision for u in units):
+        return {ALL_UNITS: revision}
     return dict(released)
 
 

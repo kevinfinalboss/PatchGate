@@ -151,8 +151,10 @@ See the [threat model](security/threat-model.md).
 |---|---|---|
 | `Patchgate:Managed` | User | `true` opts the instance in |
 | `Patchgate:Profile` | User | Catalog profile to apply |
-| `Patchgate:Env` | User | Environment label (`dev`, `prod`, …) |
-| `Patchgate:Ring` | User or profile | Patch ring number |
+| `Patchgate:AppSets` | User / `patchgate-cli` | App sets added to the profile |
+| `Patchgate:Env` | User | Free-form environment label (`dev`, `prod`, `lab`); informational only |
+| `Patchgate:Ring` | User | Ring override, honoured only where the account allows it (single-account mode); the ring normally comes from the account (ADR 0010) |
+| `Patchgate:Approvers` | User | Approver group override, limited to the groups the account allows |
 | `Patchgate:BootstrapStatus` | Patchgate | `Success` / `Failed` |
 | `Patchgate:LastPatch` | Patchgate | Timestamp and result of the last patch |
 

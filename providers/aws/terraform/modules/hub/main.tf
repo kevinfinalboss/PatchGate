@@ -204,6 +204,11 @@ data "aws_iam_policy_document" "resolver" {
     resources = [aws_dynamodb_table.config.arn]
   }
   statement {
+    sid       = "ReadReleasedRevisions"
+    actions   = ["dynamodb:GetItem", "dynamodb:Query"]
+    resources = [aws_dynamodb_table.releases.arn, aws_dynamodb_table.history.arn]
+  }
+  statement {
     sid       = "AcquireInstanceLock"
     actions   = ["dynamodb:PutItem"]
     resources = [aws_dynamodb_table.locks.arn]
@@ -235,9 +240,12 @@ resource "aws_lambda_function" "resolver" {
 
   environment {
     variables = {
-      EXECUTION_ROLE_NAME    = var.execution_role_name
-      PATCHGATE_CONFIG_TABLE = aws_dynamodb_table.config.name
-      PATCHGATE_LOCKS_TABLE  = aws_dynamodb_table.locks.name
+      EXECUTION_ROLE_NAME         = var.execution_role_name
+      PATCHGATE_CONFIG_TABLE      = aws_dynamodb_table.config.name
+      PATCHGATE_LOCKS_TABLE       = aws_dynamodb_table.locks.name
+      PATCHGATE_HISTORY_TABLE     = aws_dynamodb_table.history.name
+      PATCHGATE_RELEASES_TABLE    = aws_dynamodb_table.releases.name
+      PATCHGATE_DEFAULT_APPROVERS = var.default_approver_group
     }
   }
 

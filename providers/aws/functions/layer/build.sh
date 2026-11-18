@@ -14,9 +14,10 @@ mkdir -p "$OUT/python/patchgate/schemas"
 "$PY" -m pip install --quiet --require-hashes --no-deps --only-binary=:all: \
   --platform manylinux2014_x86_64 --implementation cp --python-version 3.12 \
   --target "$OUT/python" -r "$HERE/requirements.txt"
-cp "$ROOT"/core/lib/patchgate/{__init__,plan,schema}.py "$OUT/python/patchgate/"
-mkdir -p "$OUT/python/patchgate_aws"
-cp "$ROOT"/providers/aws/lib/patchgate_aws/{__init__,store}.py "$OUT/python/patchgate_aws/"
+cp "$ROOT"/core/lib/patchgate/{__init__,plan,schema,rollout,approval}.py "$OUT/python/patchgate/"
+mkdir -p "$OUT/python/patchgate_aws/schemas"
+cp "$ROOT"/providers/aws/lib/patchgate_aws/{__init__,store,validation}.py "$OUT/python/patchgate_aws/"
+cp "$ROOT"/providers/aws/schemas/*.schema.json "$OUT/python/patchgate_aws/schemas/"
 cp "$ROOT"/core/schemas/*.schema.json "$OUT/python/patchgate/schemas/"
 find "$OUT" -name '__pycache__' -prune -exec rm -rf {} +
 echo "layer built in $OUT ($(du -sh "$OUT" | cut -f1))"

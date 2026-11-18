@@ -146,7 +146,7 @@ def test_plan_groups_affected_instances_by_ring_and_group() -> None:
         target("i-p2", appsets=("dotnet8", "nodejs-lts"), approvers_tag="payments"),
         target("i-other", appsets=("nodejs-lts",)),
     ]
-    plan = rollout.plan_rollout("AppSet", "dotnet8", 5, targets, ACCOUNTS, policy(), "hub")
+    plan = rollout.plan_rollout("AppSet", "dotnet8", "r5", targets, ACCOUNTS, policy(), "hub")
     assert [(s.ring, s.approval, s.soak_seconds) for s in plan.stages] == [
         (0, False, 600),
         (1, True, 0),
@@ -159,32 +159,38 @@ def test_plan_groups_affected_instances_by_ring_and_group() -> None:
 
 def test_profile_changes_affect_instances_using_the_profile() -> None:
     targets = [target("i-1"), Target("i-2", PROD, "other")]
-    plan = rollout.plan_rollout("Profile", "web", 2, targets, ACCOUNTS, policy(), "hub")
+    plan = rollout.plan_rollout("Profile", "web", "r2", targets, ACCOUNTS, policy(), "hub")
     assert plan.stages[1].units == {"1:platform": ["i-1"]}
     assert not plan.covers_every_ring  # nobody in ring 0
 
 
 def test_kinds_outside_the_policy_are_not_rolled_out() -> None:
     with pytest.raises(rollout.RolloutError):
-        rollout.plan_rollout("Profile", "web", 2, [], ACCOUNTS, policy(kinds=["AppSet"]), "hub")
+        rollout.plan_rollout("Profile", "web", "r2", [], ACCOUNTS, policy(kinds=["AppSet"]), "hub")
 
 
 # ---------------------------------------------------------------- released versions
 
 
-def test_instances_get_their_units_release_or_the_version_released_everywhere() -> None:
-    released = {"*": 4, "0:platform": 5}
-    assert rollout.version_for(released, Placement(0, "platform")) == 5
-    assert rollout.version_for(released, Placement(1, "platform")) == 4
+def test_revision_is_the_digest_of_the_stored_document() -> None:
+    assert rollout.revision_of('{"a": 1}') == rollout.revision_of('{"a": 1}')
+    assert rollout.revision_of('{"a": 1}') != rollout.revision_of('{"a": 2}')
+    assert rollout.revision_of("x").startswith("sha256:")
+
+
+def test_instances_get_their_units_release_or_the_revision_released_everywhere() -> None:
+    released = {"*": "r4", "0:platform": "r5"}
+    assert rollout.revision_for(released, Placement(0, "platform")) == "r5"
+    assert rollout.revision_for(released, Placement(1, "platform")) == "r4"
 
 
 def test_full_rollout_releases_the_version_to_everyone() -> None:
     targets = [target("i-dev", DEV, appsets=("s",)), target("i-p", appsets=("s",))]
-    plan = rollout.plan_rollout("AppSet", "s", 5, targets, ACCOUNTS, policy(), "hub")
-    released = {"*": 4}
+    plan = rollout.plan_rollout("AppSet", "s", "r5", targets, ACCOUNTS, policy(), "hub")
+    released = {"*": "r4"}
     for unit in ("0:platform", "1:platform"):
-        released = rollout.release(released, unit, 5)
-    assert rollout.complete(released, 5, plan) == {"*": 5}
+        released = rollout.release(released, unit, "r5")
+    assert rollout.complete(released, "r5", plan) == {"*": "r5"}
 
 
 def test_rejection_keeps_the_previous_version_for_that_unit_and_new_instances() -> None:
@@ -193,18 +199,18 @@ def test_rejection_keeps_the_previous_version_for_that_unit_and_new_instances() 
         target("i-p1", appsets=("s",)),
         target("i-p2", appsets=("s",), approvers_tag="payments"),
     ]
-    plan = rollout.plan_rollout("AppSet", "s", 5, targets, ACCOUNTS, policy(), "hub")
-    released = rollout.release(rollout.release({"*": 4}, "0:platform", 5), "1:platform", 5)
-    final = rollout.complete(released, 5, plan)  # payments rejected
-    assert final == {"*": 4, "0:platform": 5, "1:platform": 5}
-    assert rollout.version_for(final, Placement(1, "payments")) == 4
+    plan = rollout.plan_rollout("AppSet", "s", "r5", targets, ACCOUNTS, policy(), "hub")
+    released = rollout.release(rollout.release({"*": "r4"}, "0:platform", "r5"), "1:platform", "r5")
+    final = rollout.complete(released, "r5", plan)  # payments rejected
+    assert final == {"*": "r4", "0:platform": "r5", "1:platform": "r5"}
+    assert rollout.revision_for(final, Placement(1, "payments")) == "r4"
 
 
 def test_revert_restores_what_the_unit_had_before() -> None:
-    before = {"*": 4, "1:payments": 3}
-    during = rollout.release(rollout.release(before, "0:platform", 5), "1:payments", 5)
-    assert rollout.revert(during, "0:platform", before) == {"*": 4, "1:payments": 5}
-    assert rollout.revert(during, "1:payments", before)["1:payments"] == 3
+    before = {"*": "r4", "1:payments": "r3"}
+    during = rollout.release(rollout.release(before, "0:platform", "r5"), "1:payments", "r5")
+    assert rollout.revert(during, "0:platform", before) == {"*": "r4", "1:payments": "r5"}
+    assert rollout.revert(during, "1:payments", before)["1:payments"] == "r3"
 
 
 # ---------------------------------------------------------------- approval rules

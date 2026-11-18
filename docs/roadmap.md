@@ -87,8 +87,8 @@ One approval engine for every change, built once and used by profile and app set
 #### 4c-1 — Engine and rollout of profile and app set changes
 - [x] `RolloutPolicy` and `ApproverGroup` kinds; ring, approver group, release and quorum rules as pure functions in `core/lib`
 - [x] Signed, expiring approval tokens (confirmation page decides, not the link)
-- [ ] Accounts registered with their ring and approver groups (`patchgate-cli account`); per-instance override with `Patchgate:Approvers`, limited to the groups the account allows
-- [ ] Profile and app set changes stay pending per ring and approver group; the resolver serves the released version
+- [x] Accounts registered with their ring and approver groups (`patchgate-cli account`); per-instance override with `Patchgate:Approvers`, limited to the groups the account allows
+- [x] Profile and app set changes stay pending per ring and approver group; the resolver serves the released revision
 - [ ] Rollout workflow: ring by ring, re-plan through the bootstrap workflow, health check, soak, automatic revert on failure
 - [ ] Email approval per approver group (SES), single use, every decision recorded as audit evidence
 - [ ] `patchgate-cli rollout list | status | cancel`; `apply` shows the impact per ring

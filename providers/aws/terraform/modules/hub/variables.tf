@@ -38,3 +38,14 @@ variable "protect_config" {
   type        = bool
   default     = true
 }
+
+variable "default_approver_group" {
+  description = "Approver group for instances in accounts not registered with patchgate-cli account set (ADR 0010)."
+  type        = string
+  default     = "platform"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", var.default_approver_group))
+    error_message = "Must be an approver group name (lowercase letters, digits and dashes)."
+  }
+}

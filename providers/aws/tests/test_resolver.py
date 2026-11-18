@@ -51,12 +51,17 @@ def seed_config_table() -> None:
             {"AttributeName": "name", "KeyType": "RANGE"},
         ],
     )
-    boto3.client("dynamodb", region_name=REGION).create_table(
-        TableName="patchgate-locks",
-        BillingMode="PAY_PER_REQUEST",
-        AttributeDefinitions=[{"AttributeName": "lockId", "AttributeType": "S"}],
-        KeySchema=[{"AttributeName": "lockId", "KeyType": "HASH"}],
-    )
+    for name, keys in (
+        ("patchgate-locks", [("lockId", "HASH")]),
+        ("patchgate-releases", [("id", "HASH")]),
+        ("patchgate-config-history", [("id", "HASH"), ("changeId", "RANGE")]),
+    ):
+        boto3.client("dynamodb", region_name=REGION).create_table(
+            TableName=name,
+            BillingMode="PAY_PER_REQUEST",
+            AttributeDefinitions=[{"AttributeName": k, "AttributeType": "S"} for k, _ in keys],
+            KeySchema=[{"AttributeName": k, "KeyType": t} for k, t in keys],
+        )
     store = ConfigStore("patchgate-config")
     for doc in Catalog.load(CATALOG).documents():
         store.put(doc, "test-seed", managed_by=BUILT_IN)
@@ -265,3 +270,101 @@ def test_no_lock_when_nothing_to_do(resolver: ModuleType) -> None:
     assert result["lockBusy"] is False
     items = boto3.client("dynamodb", region_name=REGION).scan(TableName="patchgate-locks")
     assert items["Count"] == 0
+
+
+# ---------------------------------------------------------------- rings, approver groups, releases
+
+
+def register_account(ring: int, approvers: str = "platform", **spec: Any) -> None:
+    from patchgate_aws.store import ConfigStore
+
+    store = ConfigStore("patchgate-config")
+    for group in {approvers, *spec.get("allowedApprovers", [])}:
+        store.put(
+            {
+                "apiVersion": "patchgate.io/v1alpha1",
+                "kind": "ApproverGroup",
+                "metadata": {"name": group, "description": "test"},
+                "spec": {"members": [f"{group}@example.com"]},
+            },
+            "test",
+        )
+    store.put(
+        {
+            "apiVersion": "patchgate.io/v1alpha1",
+            "kind": "Account",
+            "metadata": {"name": ACCOUNT},
+            "spec": {"ring": ring, "approvers": approvers, **spec},
+        },
+        "test",
+    )
+
+
+def change_base_linux_pending_in_ring_0() -> tuple[str, str]:
+    """base-linux gets a new revision released only to ring 0 / platform (as a rollout would)."""
+    import json
+
+    from patchgate_aws.store import ConfigStore, ReleaseStore
+
+    store = ConfigStore("patchgate-config")
+    old = store.get("Profile", "base-linux")
+    assert old is not None
+    # what the config-audit stream consumer records for every version
+    boto3.resource("dynamodb").Table("patchgate-config-history").put_item(
+        Item={"id": "Profile#base-linux", "changeId": "1#1", "version": 1, "document": old.raw}
+    )
+    ReleaseStore("patchgate-releases").pin("Profile", "base-linux", old.revision, "test")
+    doc = json.loads(old.raw)
+    doc["spec"]["drift"]["interval"] = "2h"
+    store.put(doc, "tester")
+    new = store.get("Profile", "base-linux")
+    assert new is not None
+    boto3.resource("dynamodb").Table("patchgate-releases").update_item(
+        Key={"id": "Profile#base-linux"},
+        UpdateExpression="SET released.#u = :r",
+        ExpressionAttributeNames={"#u": "0:platform"},
+        ExpressionAttributeValues={":r": new.revision},
+    )
+    return old.revision, new.revision
+
+
+def drift_interval(result: dict[str, Any]) -> str:
+    from patchgate.plan import decode_plan
+
+    return str(decode_plan(result["documentParameters"]["Plan"][0])["drift"]["interval"])
+
+
+def test_each_ring_gets_the_revision_released_to_it(resolver: ModuleType) -> None:
+    change_base_linux_pending_in_ring_0()
+    register_account(ring=0)
+    dev = resolver.handler(event(launch({"Patchgate:Managed": "true"})))
+    assert (dev["ring"], dev["approvers"], drift_interval(dev)) == (0, "platform", "2h")
+    register_account(ring=1)
+    prod = resolver.handler(event(launch({"Patchgate:Managed": "true"})))
+    assert (prod["ring"], drift_interval(prod)) == (1, "30m")  # still the approved revision
+
+
+def test_unregistered_account_is_served_as_the_last_ring(resolver: ModuleType) -> None:
+    change_base_linux_pending_in_ring_0()
+    result = resolver.handler(event(launch({"Patchgate:Managed": "true"})))
+    assert result["ring"] == 1 and drift_interval(result) == "30m"
+    assert "not registered" in result["placementWarnings"][0]
+
+
+def test_approver_tag_is_honoured_only_for_allowed_groups(resolver: ModuleType) -> None:
+    register_account(ring=1, allowedApprovers=["payments"])
+    tags = {"Patchgate:Managed": "true", "Patchgate:Approvers": "payments"}
+    assert resolver.handler(event(launch(tags)))["approvers"] == "payments"
+    refused = resolver.handler(event(launch({**tags, "Patchgate:Approvers": "myself"})))
+    assert refused["approvers"] == "platform"
+    assert "not allowed" in refused["placementWarnings"][0]
+    odd = resolver.handler(event(launch({**tags, "Patchgate:Approvers": "Bad Name!"})))
+    assert "not a valid group name" in odd["placementWarnings"][0]
+
+
+def test_released_revision_missing_from_history_is_refused(resolver: ModuleType) -> None:
+    from patchgate_aws.store import ReleaseStore
+
+    ReleaseStore("patchgate-releases").pin("Profile", "base-linux", "sha256:gone", "test")
+    with pytest.raises(resolver.ResolveError, match="not in history"):
+        resolver.handler(event(launch({"Patchgate:Managed": "true"})))

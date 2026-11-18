@@ -13,6 +13,7 @@ Examples:
     patchgate-cli instance show i-0123456789abcdef0
     patchgate-cli instance appsets i-0123456789abcdef0 --add dotnet8
     patchgate-cli instance reconcile i-0123456789abcdef0
+    patchgate-cli account set 123456789012 --ring 1 --approvers platform --allow payments
 """
 
 from __future__ import annotations
@@ -30,8 +31,9 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 from patchgate.plan import KINDS, CatalogError, Document, Library
-from patchgate.schema import validate_document
-from patchgate_aws.store import BUILT_IN, ConfigStore, Record, VersionConflictError
+from patchgate.rollout import GATED_KINDS, policy_rings
+from patchgate_aws.store import BUILT_IN, ConfigStore, Record, ReleaseStore, VersionConflictError
+from patchgate_aws.validation import validate as validate_any
 
 KIND_ALIASES = {
     "agent": "Agent",
@@ -48,6 +50,8 @@ KIND_ALIASES = {
     "rolloutpolicies": "RolloutPolicy",
     "approvergroup": "ApproverGroup",
     "approvergroups": "ApproverGroup",
+    "account": "Account",
+    "accounts": "Account",
 }
 TAG_PROFILE = "Patchgate:Profile"
 TAG_APPSETS = "Patchgate:AppSets"
@@ -80,7 +84,13 @@ class Cli:
         self.config_session = boto3.Session(
             profile_name=args.config_profile or args.profile, region_name=args.region
         )
-        self.store = ConfigStore(args.table, self.config_session)
+        self.releases = ReleaseStore(args.releases_table, self.config_session)
+        self.store = ConfigStore(
+            args.table,
+            self.config_session,
+            history_table=args.history_table,
+            releases=self.releases,
+        )
         self.out = sys.stdout
 
     def print(self, text: str = "") -> None:
@@ -102,14 +112,50 @@ class Cli:
         return library
 
     def validate(self, doc: Document) -> None:
-        errors = validate_document(doc, f"{doc.get('kind')}/{doc.get('metadata', {}).get('name')}")
+        errors = validate_any(doc, f"{doc.get('kind')}/{doc.get('metadata', {}).get('name')}")
         if errors:
             raise CliError("invalid document:\n  " + "\n  ".join(errors))
+        if doc["kind"] == "Account":
+            self.validate_account(doc)
+            return
         library = self.full_library()
         library.add(doc)
         problems = library.reference_errors()
         if problems:
             raise CliError("inconsistent with existing configuration:\n  " + "\n  ".join(problems))
+
+    def rollout_policy(self) -> Document | None:
+        record = self.store.get("RolloutPolicy", self.args.rollout_policy)
+        return record.document if record else None
+
+    def validate_account(self, doc: Document) -> None:
+        spec = doc["spec"]
+        problems = [
+            f"unknown approver group '{group}'"
+            for group in dict.fromkeys([spec["approvers"], *spec.get("allowedApprovers", [])])
+            if self.store.get("ApproverGroup", group) is None
+        ]
+        policy = self.rollout_policy()
+        if policy is not None and spec["ring"] not in policy_rings(policy):
+            problems.append(
+                f"ring {spec['ring']} is not in rollout policy '{self.args.rollout_policy}' "
+                f"(rings {policy_rings(policy)})"
+            )
+        if problems:
+            raise CliError("inconsistent with existing configuration:\n  " + "\n  ".join(problems))
+
+    def gated(self, kind: str) -> bool:
+        policy = self.rollout_policy()
+        return policy is not None and kind in policy["spec"].get("kinds", GATED_KINDS)
+
+    def pin_before_change(self, current: Record | None) -> bool:
+        """Gated documents: instances keep the current revision until a rollout releases the
+        new one (ADR 0010). Returns True when the change is gated."""
+        if current is None or not self.gated(current.document["kind"]):
+            return False
+        kind, name = current.document["kind"], current.document["metadata"]["name"]
+        self.releases.pin(kind, name, current.revision, self.caller())
+        return True
 
     def protect_built_in(self, record: Record | None, action: str) -> None:
         if record and record.managed_by == BUILT_IN and not self.args.force:
@@ -158,8 +204,14 @@ class Cli:
                 self.print(f"{kind}/{name}: valid, would be {'updated' if current else 'created'}")
                 continue
             managed_by = current.managed_by if current else "user"
+            gated = self.pin_before_change(current)
             version = self.store.put(doc, self.caller(), managed_by=managed_by)
             self.print(f"{kind}/{name}: {'updated' if current else 'created'} (version {version})")
+            if gated and current is not None:
+                self.print(
+                    f"  pending: instances keep version {current.version} until a rollout "
+                    "releases it ring by ring"
+                )
         return 0
 
     def cmd_copy(self) -> int:
@@ -226,8 +278,40 @@ class Cli:
         current = self.store.get(kind, self.args.name)
         self.protect_built_in(current, "rolling it back")
         self.validate(doc)
+        gated = self.pin_before_change(current)
         version = self.store.put(doc, f"{self.caller()} (rollback to v{self.args.version})")
         self.print(f"{kind}/{self.args.name}: restored version {self.args.version} as {version}")
+        if gated:
+            self.print("  pending: instances keep their version until a rollout releases it")
+        return 0
+
+    # ------------------------------------------------------------ accounts
+
+    def cmd_account_set(self) -> int:
+        current = self.store.get("Account", self.args.account_id)
+        spec: dict[str, Any] = {"ring": self.args.ring, "approvers": self.args.approvers}
+        if self.args.allow:
+            spec["allowedApprovers"] = [g.strip() for g in self.args.allow.split(",") if g.strip()]
+        if self.args.allow_ring_tag:
+            spec["allowRingTag"] = True
+        doc: Document = {
+            "apiVersion": "patchgate.io/v1alpha1",
+            "kind": "Account",
+            "metadata": {"name": self.args.account_id},
+            "spec": spec,
+        }
+        if self.args.description:
+            doc["metadata"]["description"] = self.args.description
+        self.validate(doc)
+        if current and current.document == doc:
+            self.print(f"Account/{self.args.account_id}: unchanged")
+            return 0
+        version = self.store.put(doc, self.caller())
+        self.print(
+            f"Account/{self.args.account_id}: ring {spec['ring']}, approvers {spec['approvers']}"
+            + (f" (also allowed: {', '.join(spec['allowedApprovers'])})" if self.args.allow else "")
+            + f" (version {version})"
+        )
         return 0
 
     # ------------------------------------------------------------ instances
@@ -343,6 +427,8 @@ def parser() -> argparse.ArgumentParser:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)  # fmt: skip
     p.add_argument("--table", default="patchgate-config")
     p.add_argument("--history-table", default="patchgate-config-history")
+    p.add_argument("--releases-table", default="patchgate-releases")
+    p.add_argument("--rollout-policy", default="default")
     p.add_argument("--profile", help="AWS CLI profile (instances; also config unless overridden)")
     p.add_argument("--config-profile", help="AWS CLI profile for the hub configuration table")
     p.add_argument("--region")
@@ -372,6 +458,16 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("name")
     s.add_argument("--version", type=int, required=True)
 
+    account = sub.add_parser("account", help="register an account's ring and approver groups")
+    asub = account.add_subparsers(dest="account_command", required=True)
+    s = asub.add_parser("set", help="create or replace the account's rollout settings")
+    s.add_argument("account_id")
+    s.add_argument("--ring", type=int, required=True)
+    s.add_argument("--approvers", required=True, help="approver group of the account")
+    s.add_argument("--allow", help="comma-separated groups instances may pick by tag")
+    s.add_argument("--allow-ring-tag", action="store_true", help="honour Patchgate:Ring")
+    s.add_argument("--description")
+
     instance = sub.add_parser("instance", help="inspect, assign app sets or reconcile instances")
     isub = instance.add_subparsers(dest="instance_command", required=True)
     s = isub.add_parser("show")
@@ -394,7 +490,9 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     cli = Cli(args)
-    command = args.command if args.command != "instance" else f"instance_{args.instance_command}"
+    command = args.command
+    if command in ("instance", "account"):
+        command = f"{command}_{getattr(args, command + '_command')}"
     try:
         return int(getattr(cli, f"cmd_{command}")())
     except (CliError, VersionConflictError) as exc:

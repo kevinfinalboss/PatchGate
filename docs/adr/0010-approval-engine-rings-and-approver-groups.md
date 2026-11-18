@@ -27,7 +27,7 @@ Approval must be possible per account and, where teams share an account, per ins
 For the version each instance receives:
 
 - **a.** Copy approved documents into separate "released" items. Duplicates documents and history.
-- **b.** Record, per document, which *version* each unit received and read that version from the
+- **b.** Record, per document, which *revision* each unit received and read that revision from the
   history table that already stores every version.
 
 For approval links: SNS email (same message for every subscriber, so links cannot identify the
@@ -47,11 +47,17 @@ Options **3** and **b**, with SES.
   be overridden per instance with `Patchgate:Approvers`, limited to the groups the account allows.
   A disallowed tag is ignored and reported. Any member's rejection rejects; approvals count once
   per member.
-- **Releases:** each gated document records `{unit: version}` plus `"*"` (the version for every
-  other unit). New documents start released everywhere (no instance uses them yet). A rollout
-  releases unit by unit; when every ring had instances and every unit took the version, it
-  becomes `"*"`. Otherwise `"*"` stays, so instances nobody approved for, including future ones,
-  never receive it.
+- **Releases:** each gated document records `{unit: revision}` plus `"*"` (the revision for every
+  other unit) in a separate `patchgate-releases` table, so configuration writes never overwrite
+  them and the history only holds real changes. A *revision* is the sha256 of the stored
+  document, not its version number: built-in documents are re-seeded by every deploy with
+  version 1, so only the content identifies them. Documents without releases are served as
+  stored (new documents: no instance uses them yet). Before a gated document changes,
+  `patchgate-cli` pins the current revision as `"*"`; the audit function does the same for
+  changes made elsewhere (console, re-seeded built-ins), with a window of seconds in which a
+  bootstrap could still see the new revision. A rollout releases unit by unit; when every ring
+  had instances and every unit took the revision, it becomes `"*"`. Otherwise `"*"` stays, so
+  instances nobody approved for, including future ones, never receive it.
 - **Rollout policy** (`RolloutPolicy`): rings in order, `approval: none | required`, `soak`,
   `approvalTimeout` (unanswered = rejected) and `onFailure: revert | stop`. `revert` releases
   the previous version to the failed ring again; the rollout always stops on failure.

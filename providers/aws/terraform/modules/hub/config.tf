@@ -92,6 +92,27 @@ resource "aws_lambda_layer_version" "core" {
   compatible_runtimes      = ["python3.12"]
   compatible_architectures = ["x86_64"]
 }
+# Revision of each gated document (profiles, app sets) released to each ring and approver group
+# (ADR 0010). Written by patchgate-cli, the audit function (safety net) and rollouts.
+resource "aws_dynamodb_table" "releases" {
+  name                        = "patchgate-releases"
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "id"
+  deletion_protection_enabled = var.protect_config
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+}
 
 # ------------------------------------------------------------------ audit trail
 
@@ -119,6 +140,16 @@ data "aws_iam_policy_document" "audit" {
     sid       = "WriteHistory"
     actions   = ["dynamodb:PutItem"]
     resources = [aws_dynamodb_table.history.arn]
+  }
+  statement {
+    sid       = "ReadRolloutPolicy"
+    actions   = ["dynamodb:GetItem"]
+    resources = [aws_dynamodb_table.config.arn]
+  }
+  statement {
+    sid       = "PinPreviousRevision"
+    actions   = ["dynamodb:PutItem"]
+    resources = [aws_dynamodb_table.releases.arn]
   }
   statement {
     sid       = "Alert"
@@ -156,8 +187,10 @@ resource "aws_lambda_function" "audit" {
 
   environment {
     variables = {
-      PATCHGATE_HISTORY_TABLE = aws_dynamodb_table.history.name
-      PATCHGATE_ALERT_TOPIC   = aws_sns_topic.notifications.arn
+      PATCHGATE_HISTORY_TABLE  = aws_dynamodb_table.history.name
+      PATCHGATE_ALERT_TOPIC    = aws_sns_topic.notifications.arn
+      PATCHGATE_CONFIG_TABLE   = aws_dynamodb_table.config.name
+      PATCHGATE_RELEASES_TABLE = aws_dynamodb_table.releases.name
     }
   }
 

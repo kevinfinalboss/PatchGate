@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `patchgate-core` Lambda layer with hash-pinned dependencies (`make layer`).
 - Drift modes per category (`drift.agents`, `drift.apps`, `drift.hardening`) and a maintenance window (`drift.window`): outside it drift only reports; the first check inside each window corrects (ADR 0009).
 - `patchgate-cli instance reconcile` runs a drift check now, ignoring the interval and the window (`Force` parameter on the `Patchgate-Drift` document).
+- Accounts registered with `patchgate-cli account set` (ring, approver group, groups instances may pick with `Patchgate:Approvers`, optional `Patchgate:Ring` for single-account mode). The resolver serves profiles and app sets as released to the instance's ring and approver group (`patchgate-releases` table, revisions read back from history); changing a gated document through the CLI keeps instances on the current revision, and the audit function does the same for changes made elsewhere.
 - `RolloutPolicy` and `ApproverGroup` catalog kinds, a built-in `default` rollout policy (ring 0 direct, ring 1 with approval), and the rollout and approval-token rules in `core/lib` (ADR 0010). The rollout itself lands with the AWS workflow.
 
 ### Deprecated
