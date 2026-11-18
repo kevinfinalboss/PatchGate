@@ -191,3 +191,60 @@ def test_instance_appsets_are_validated_against_the_profile(aws: ConfigStore) ->
     assert code == 1 and "not allowed" in err
     assert run("instance", "appsets", instance, "--remove", "dotnet8")[0] == 0
     assert "Patchgate:AppSets" not in instance_tags(instance)
+
+
+DRIFT_DOCUMENT = Path(__file__).resolve().parents[1] / "ssm" / "Patchgate-Drift.json"
+
+
+def register_drift_document() -> None:
+    boto3.client("ssm", region_name=REGION).create_document(
+        Name="Patchgate-Drift",
+        Content=DRIFT_DOCUMENT.read_text(),
+        DocumentType="Command",
+        DocumentFormat="JSON",
+    )
+
+
+def test_instance_reconcile_runs_the_drift_document_with_force(aws: ConfigStore) -> None:
+    register_drift_document()
+    instance = launch({"Patchgate:Managed": "true", "Patchgate:Profile": "web-windows"})
+    code, out, _ = run("instance", "reconcile", instance)
+    assert code == 0
+    assert f"reconcile success on {instance}" in out
+    ssm = boto3.client("ssm", region_name=REGION)
+    command = ssm.list_commands(InstanceId=instance)["Commands"][0]
+    assert command["DocumentName"] == "Patchgate-Drift"
+    assert command["Parameters"] == {"Force": ["true"]}
+
+
+def test_instance_reconcile_refuses_unmanaged_instances(aws: ConfigStore) -> None:
+    instance = launch({"Name": "not-patchgate"})
+    code, _, err = run("instance", "reconcile", instance)
+    assert code == 1 and "not managed by Patchgate" in err
+
+
+def test_reconcile_waits_until_the_command_finishes(
+    aws: ConfigStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from botocore.exceptions import ClientError
+
+    class FakeSsm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_command_invocation(self, **_: str) -> dict[str, str]:
+            self.calls += 1
+            if self.calls == 1:
+                raise ClientError(
+                    {"Error": {"Code": "InvocationDoesNotExist", "Message": "not yet"}},
+                    "GetCommandInvocation",
+                )
+            if self.calls == 2:
+                return {"Status": "InProgress"}
+            return {"Status": "Failed", "StandardOutputContent": "agent demo failed"}
+
+    monkeypatch.setattr(cli, "POLL_SECONDS", 0)
+    args = cli.parser().parse_args(["--region", REGION, "instance", "reconcile", "i-1"])
+    fake = FakeSsm()
+    invocation = cli.Cli(args).wait_for_command(fake, "cmd-1", "i-1")
+    assert invocation["Status"] == "Failed" and fake.calls == 3

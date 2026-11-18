@@ -21,12 +21,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `patchgate-cli` to manage the configuration store (list, describe, apply with validation and dry run, copy, delete, history, rollback) and instance app sets; `--config-profile` for multi-account use.
 - Changes to `Patchgate:*` tags on running instances re-plan the instance without a restart.
 - `patchgate-core` Lambda layer with hash-pinned dependencies (`make layer`).
+- Drift modes per category (`drift.agents`, `drift.apps`, `drift.hardening`) and a maintenance window (`drift.window`): outside it drift only reports; the first check inside each window corrects (ADR 0009).
+- `patchgate-cli instance reconcile` runs a drift check now, ignoring the interval and the window (`Force` parameter on the `Patchgate-Drift` document).
 
 ### Changed
 
 - Profiles declare applications in `apps` (replaces the `chocolatey` field) and the app sets they accept in `allowedAppSets`.
 - The compiled `plans.json` is replaced by `seed.json` (`make seed`), which seeds the configuration table.
 - The spoke StackSet template is delivered from a versioned S3 artifacts bucket (it exceeds the 51 KB inline limit).
+- Compiled plans list the effective drift mode of every category (plan digests change once). Drift events add `modes`, `trigger` and `window`; `mode` is now a readable summary.
 
 ### Fixed
 
@@ -40,5 +43,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Project structure split into cloud-agnostic `core/` and `providers/`.
 - Architecture, roadmap, provider contract and threat model documentation.
-- ADRs 0001–0008 covering the core/providers split, multi-account model, orchestration, bootstrap, agent catalog, StackSet onboarding, hardening engines and the configuration store.
+- ADRs 0001–0009 covering the core/providers split, multi-account model, orchestration, bootstrap, agent catalog, StackSet onboarding, hardening engines, the configuration store and drift control.
 - Community files: README, AGENTS.md, SECURITY, CONTRIBUTING, Code of Conduct, issue and PR templates.

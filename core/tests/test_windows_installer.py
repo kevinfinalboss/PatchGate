@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -212,6 +213,79 @@ def test_drift_respects_interval(tmp_path: Path) -> None:
 
 def test_drift_without_applied_plan_is_a_no_op(tmp_path: Path) -> None:
     assert run(tmp_path, None, "-Drift")[0] == 0
+
+
+def utc_hhmm(offset: timedelta) -> str:
+    return (datetime.now(UTC) + offset).strftime("%H:%M")
+
+
+ALL_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+# Built around the current time so the tests do not depend on when they run.
+WINDOW_NOW = {"days": ALL_DAYS, "start": utc_hhmm(timedelta(minutes=-30)), "duration": "2h"}
+WINDOW_LATER = {"days": ALL_DAYS, "start": utc_hhmm(timedelta(hours=3)), "duration": "1h"}
+
+
+def broken_by_hand(tmp_path: Path, **drift: Any) -> tuple[Path, Path]:
+    """Applies a plan with one agent and one control, then breaks both."""
+    agent, setting = tmp_path / "agent", tmp_path / "setting"
+    doc = json.loads(base64.b64decode(hardened(control("keep", setting))))
+    doc["steps"] = [
+        {
+            "agent": "demo",
+            "method": "script",
+            "script": f'New-Item -ItemType File -Force -Path "{agent}" | Out-Null',
+            "validate": f'if (-not (Test-Path "{agent}")) {{ exit 1 }}',
+        }
+    ]
+    doc["drift"] = {"interval": "30m", "mode": "enforce", **drift}
+    assert run(tmp_path, base64.b64encode(json.dumps(doc).encode()).decode())[0] == 0
+    agent.unlink()
+    setting.unlink()
+    return agent, setting
+
+
+def test_drift_mode_per_category(tmp_path: Path) -> None:
+    agent, setting = broken_by_hand(tmp_path, hardening="audit")
+    assert run(tmp_path, None, "-Drift")[0] == 0
+    assert agent.exists() and not setting.exists()
+    event = read(tmp_path / "pd" / "Patchgate" / "drift-event.json")
+    assert event["mode"] == "agents=enforce, apps=enforce, hardening=audit"
+    assert event["modes"] == {"agents": "enforce", "apps": "enforce", "hardening": "audit"}
+    assert {f["item"]: f["status"] for f in event["findings"]} == {
+        "agent:demo": "remediated",
+        "control:keep": "non-compliant",
+    }
+
+
+def test_outside_window_only_reports(tmp_path: Path) -> None:
+    agent, setting = broken_by_hand(tmp_path, window=WINDOW_LATER)
+    assert run(tmp_path, None, "-Drift")[0] == 0
+    assert not agent.exists() and not setting.exists()
+    event = read(tmp_path / "pd" / "Patchgate" / "drift-event.json")
+    assert (event["window"], event["trigger"]) == ("outside", "schedule")
+    assert event["mode"] == "audit (outside maintenance window)"
+
+
+def test_inside_window_corrects_even_before_the_interval(tmp_path: Path) -> None:
+    agent, setting = broken_by_hand(tmp_path, interval="6h", window=WINDOW_NOW)
+    state_file = tmp_path / "pd" / "Patchgate" / "state.json"
+    state = json.loads(state_file.read_text(encoding="utf-8-sig"))
+    state["lastDriftAt"] = datetime.now(UTC).timestamp() - 60  # audit run a minute ago
+    state_file.write_text(json.dumps(state), encoding="utf-8")
+    code, state = run(tmp_path, None, "-Drift")
+    assert code == 0
+    assert agent.exists() and setting.exists()
+    assert "lastWindowDriftAt" in state
+    assert read(tmp_path / "pd" / "Patchgate" / "drift-event.json")["window"] == "inside"
+
+
+def test_reconcile_ignores_window_and_interval(tmp_path: Path) -> None:
+    agent, setting = broken_by_hand(tmp_path, interval="off", window=WINDOW_LATER)
+    assert run(tmp_path, None, "-Drift", "-Force")[0] == 0
+    assert agent.exists() and setting.exists()
+    event = read(tmp_path / "pd" / "Patchgate" / "drift-event.json")
+    assert event["trigger"] == "reconcile"
+    assert event["mode"] == "enforce (reconcile, maintenance window ignored)"
 
 
 # ---------------------------------------------------------------- applications

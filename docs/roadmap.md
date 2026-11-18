@@ -76,9 +76,9 @@ waves with approval. Phase 4 builds that once and reuses it for everything.
 - [x] Verified in the lab: app sets at launch (.NET 8 on Windows, git/jq on Linux); `patchgate-cli` tag changes applied without restart (Node.js added; .NET pruned while profile apps stayed; on Linux git pruned, pre-installed jq untouched); app removed by hand reinstalled by drift with email; disallowed app set refused with email; duplicate launch events serialised by the per-instance lock (one install)
 
 ### 4b — Drift control
-- [ ] Drift mode per category (`agents`, `apps`, `hardening`); the profile's `mode` stays the default
-- [ ] Maintenance window per profile: outside it drift only reports; inside it corrects (at least one correcting run per window). Bootstrap and tag changes stay immediate
-- [ ] `patchgate-cli instance reconcile`: run the drift check now (ignores interval and window)
+- [x] Drift mode per category (`agents`, `apps`, `hardening`); the profile's `mode` stays the default
+- [x] Maintenance window per profile: outside it drift only reports; inside it corrects (at least one correcting run per window). Bootstrap and tag changes stay immediate (ADR 0009)
+- [x] `patchgate-cli instance reconcile`: run the drift check now (ignores interval and window)
 - [ ] Verified in the lab
 
 ### 4c — Approval engine and rings

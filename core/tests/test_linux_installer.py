@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -272,6 +273,136 @@ def test_drift_respects_interval_between_runs(installer: ModuleType, tmp_path: P
     setting.unlink()
     assert installer.main(["--drift"]) == 0  # 30m not elapsed: skipped
     assert not setting.exists()
+
+
+# ---------------------------------------------------------------- drift modes & maintenance window
+
+# Wednesday 2026-11-18 12:00 UTC
+NOON_WED = datetime(2026, 11, 18, 12, 0, tzinfo=UTC).timestamp()
+
+
+def window(start: str, duration: str = "2h", days: list[str] | None = None, **extra: str) -> Any:
+    return {"days": days or ["wed"], "start": start, "duration": duration, **extra}
+
+
+@pytest.mark.parametrize(
+    ("win", "opened_hours_before"),
+    [
+        (window("11:00"), 1),
+        (window("12:00"), 0),
+        (window("10:00"), None),  # ended exactly at 12:00
+        (window("13:00"), None),
+        (window("11:00", days=["tue", "thu"]), None),
+        (window("09:00", utcOffset="-03:00"), 0),  # 09:00 in UTC-3 is 12:00 UTC
+        (window("22:00", "16h", days=["tue"]), 14),  # Tuesday 22:00 crossing midnight
+        (window("22:00", "13h", days=["tue"]), None),
+    ],
+)
+def test_window_start(installer: ModuleType, win: Any, opened_hours_before: int | None) -> None:
+    opened = installer.window_start(win, NOON_WED)
+    if opened_hours_before is None:
+        assert opened is None
+    else:
+        assert opened == NOON_WED - opened_hours_before * 3600
+
+
+def test_first_run_inside_each_window_is_due(installer: ModuleType) -> None:
+    opened = NOON_WED - 600
+    # interval not elapsed, but nothing has run since this window opened
+    assert installer.drift_due("6h", NOON_WED - 1200, NOON_WED, opened, None) is True
+    assert installer.drift_due("6h", NOON_WED - 1200, NOON_WED, opened, opened - 86400) is True
+    # already ran inside this occurrence: back to the interval
+    assert installer.drift_due("6h", NOON_WED - 300, NOON_WED, opened, NOON_WED - 300) is False
+    assert installer.drift_due("off", None, NOON_WED, opened, None) is False
+
+
+def drift_scenario(
+    installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drift: dict[str, Any]
+) -> tuple[Path, Path]:
+    """Applies a plan with one agent and one control, then breaks both by hand."""
+    agent, setting = tmp_path / "agent", tmp_path / "setting"
+    step = {
+        "agent": "demo",
+        "method": "script",
+        "script": f"touch {agent}",
+        "validate": f"test -f {agent}",
+    }
+    doc = hardened_plan(control("keep", setting))
+    doc["steps"] = [step]
+    doc["drift"] = {"interval": "30m", "mode": "enforce", **drift}
+    monkeypatch.setattr(installer.time, "time", lambda: NOON_WED)
+    assert installer.main(["--plan-b64", b64(doc)]) == 0
+    agent.unlink()
+    setting.unlink()
+    return agent, setting
+
+
+def drift_event(tmp_path: Path) -> Any:
+    return json.loads((state_dir(tmp_path) / "drift-event.json").read_text())
+
+
+def test_drift_mode_per_category(
+    installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, setting = drift_scenario(installer, tmp_path, monkeypatch, {"hardening": "audit"})
+    assert installer.main(["--drift"]) == 0
+    assert agent.exists() and not setting.exists()
+    event = drift_event(tmp_path)
+    assert event["mode"] == "agents=enforce, apps=enforce, hardening=audit"
+    assert {f["item"]: f["status"] for f in event["findings"]} == {
+        "agent:demo": "remediated",
+        "control:keep": "non-compliant",
+    }
+
+
+def test_outside_window_only_reports(
+    installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, setting = drift_scenario(installer, tmp_path, monkeypatch, {"window": window("22:00")})
+    assert installer.main(["--drift"]) == 0
+    assert not agent.exists() and not setting.exists()
+    event = drift_event(tmp_path)
+    assert event["window"] == "outside" and event["trigger"] == "schedule"
+    assert event["mode"] == "audit (outside maintenance window)"
+    assert {f["status"] for f in event["findings"]} == {"non-compliant"}
+
+
+def test_window_opening_corrects_even_before_the_interval(
+    installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drift = {"interval": "6h", "window": window("12:00")}
+    agent, setting = drift_scenario(installer, tmp_path, monkeypatch, drift)
+    # an audit-only run happened just before the window opened
+    installer.write_json(installer.STATE_FILE, {"lastDriftAt": NOON_WED - 600})
+    assert installer.main(["--drift"]) == 0
+    assert agent.exists() and setting.exists()
+    assert drift_event(tmp_path)["window"] == "inside"
+    assert installer.read_state()["lastWindowDriftAt"] == NOON_WED
+
+
+def test_reconcile_ignores_the_window(
+    installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drift = {"interval": "off", "window": window("22:00")}
+    agent, setting = drift_scenario(installer, tmp_path, monkeypatch, drift)
+    assert installer.main(["--drift", "--force"]) == 0
+    assert agent.exists() and setting.exists()
+    event = drift_event(tmp_path)
+    assert event["trigger"] == "reconcile" and event["window"] == "outside"
+    assert event["mode"] == "enforce (reconcile, maintenance window ignored)"
+
+
+def test_plans_without_category_modes_still_work(
+    installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, setting = drift_scenario(installer, tmp_path, monkeypatch, {"mode": "audit"})
+    assert installer.main(["--drift", "--force"]) == 0
+    assert not agent.exists() and not setting.exists()
+    assert drift_event(tmp_path)["modes"] == {
+        "agents": "audit",
+        "apps": "audit",
+        "hardening": "audit",
+    }
 
 
 # ---------------------------------------------------------------- ansible engine

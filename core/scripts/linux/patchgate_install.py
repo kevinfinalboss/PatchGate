@@ -25,6 +25,7 @@ import tarfile
 import tempfile
 import time
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,8 @@ COMPLIANCE_FILE = STATE_DIR / "compliance.json"  # evidence: last result of ever
 DRIFT_EVENT_FILE = STATE_DIR / "drift-event.json"  # picked up and published by the provider
 DRIFT_INTERVALS = {"30m": 1800, "1h": 3600, "2h": 7200, "6h": 21600, "12h": 43200, "24h": 86400}
 DRIFT_SLACK_SECONDS = 120  # schedulers fire slightly early/late
+DRIFT_CATEGORIES = ("agents", "apps", "hardening")
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")  # datetime.weekday() order
 
 # "ansible" hardening engine (ADR 0007): a pinned runtime in its own venv; modules run on the
 # system Python, which has the distribution's package-manager bindings.
@@ -563,26 +566,78 @@ def summarize(controls: list[dict[str, str]]) -> dict[str, int]:
 # ---------------------------------------------------------------- drift
 
 
-def drift_due(interval: str, last_run: float | None, now: float) -> bool:
+def window_start(window: dict[str, Any], now: float) -> float | None:
+    """Start (epoch seconds) of the maintenance window occurrence that contains `now`, or None."""
+    offset = window.get("utcOffset", "+00:00")
+    sign = -1 if offset.startswith("-") else 1
+    hours, minutes = (int(part) for part in offset[1:].split(":"))
+    local = datetime.fromtimestamp(now, timezone(sign * timedelta(hours=hours, minutes=minutes)))
+    start_hour, start_minute = (int(part) for part in window["start"].split(":"))
+    length = timedelta(hours=int(window["duration"].rstrip("h")))
+    for days_back in (0, 1):  # an occurrence that started yesterday may cross midnight
+        day = local - timedelta(days=days_back)
+        if WEEKDAYS[day.weekday()] not in window["days"]:
+            continue
+        start = day.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
+        if start <= local < start + length:
+            return start.timestamp()
+    return None
+
+
+def drift_due(
+    interval: str,
+    last_run: float | None,
+    now: float,
+    window_opened: float | None = None,
+    last_in_window: float | None = None,
+) -> bool:
     if interval == "off":
         return False
+    if window_opened is not None and (last_in_window is None or last_in_window < window_opened):
+        return True  # first run of each window occurrence corrects what audit runs reported
     if last_run is None:
         return True
     return now - last_run >= DRIFT_INTERVALS[interval] - DRIFT_SLACK_SECONDS
 
 
+def drift_modes(drift: dict[str, Any], outside_window: bool) -> dict[str, str]:
+    """Effective mode per category: the profile's choice, or audit outside the window."""
+    default = drift.get("mode", "enforce")
+    return {c: "audit" if outside_window else drift.get(c, default) for c in DRIFT_CATEGORIES}
+
+
+def describe_modes(modes: dict[str, str], note: str = "") -> str:
+    """Human-readable summary for logs and emails, e.g. 'agents=enforce, apps=enforce, ...'."""
+    values = set(modes.values())
+    text = values.pop() if len(values) == 1 else ", ".join(f"{c}={m}" for c, m in modes.items())
+    return f"{text} ({note})" if note else text
+
+
 def run_drift(force: bool = False) -> int:
-    """Re-validate agents and hardening from the last applied plan. Runs on a schedule."""
+    """Re-validate agents, apps and hardening from the last applied plan. Runs on a schedule.
+
+    `force` (on-demand reconcile) ignores both the interval and the maintenance window.
+    """
     if not PLAN_FILE.exists():
         log.info("no applied plan yet; nothing to check")
         return 0
     plan = json.loads(PLAN_FILE.read_text())
     drift = plan.get("drift", {})
-    interval, mode = drift.get("interval", "30m"), drift.get("mode", "enforce")
+    interval = drift.get("interval", "30m")
+    window = drift.get("window")
+    now = time.time()
+    opened = window_start(window, now) if window else None
+    outside = bool(window) and opened is None
     state = read_state()
-    if not force and not drift_due(interval, state.get("lastDriftAt"), time.time()):
+    due = drift_due(interval, state.get("lastDriftAt"), now, opened, state.get("lastWindowDriftAt"))
+    if not force and not due:
         log.info("drift check not due (interval %s)", interval)
         return 0
+    modes = drift_modes(drift, outside and not force)
+    note = ""
+    if outside:
+        note = "reconcile, maintenance window ignored" if force else "outside maintenance window"
+    mode = describe_modes(modes, note)
 
     log.info("== drift check (interval %s, mode %s)", interval, mode)
     findings: list[dict[str, str]] = []
@@ -591,7 +646,7 @@ def run_drift(force: bool = False) -> int:
         for step in plan["steps"]:
             if not step.get("validate") or run_quiet(step["validate"]):
                 continue
-            if mode == "audit":
+            if modes["agents"] == "audit":
                 findings.append({"item": f"agent:{step['agent']}", "status": "non-compliant"})
                 continue
             try:
@@ -601,23 +656,29 @@ def run_drift(force: bool = False) -> int:
             except InstallError as exc:
                 log.error("%s", exc)
                 findings.append({"item": f"agent:{step['agent']}", "status": "failed"})
-    for app in reconcile_apps(plan, mode):
+    for app in reconcile_apps(plan, modes["apps"]):
         if app["status"] != "compliant":
             findings.append({"item": app["item"], "status": app["status"]})
-    for result in apply_hardening(plan.get("hardening"), mode):
+    for result in apply_hardening(plan.get("hardening"), modes["hardening"]):
         if result["status"] != "compliant":
             findings.append({"item": f"control:{result['control']}", "status": result["status"]})
 
-    state["lastDriftAt"] = time.time()
+    state["lastDriftAt"] = now
+    if opened is not None:
+        state["lastWindowDriftAt"] = now
     write_json(STATE_FILE, state)
     if findings:
         event = {
             "profile": plan["profile"],
             "digest": plan["digest"],
             "mode": mode,
+            "modes": modes,
+            "trigger": "reconcile" if force else "schedule",
             "findings": findings,
             "detectedAt": now_iso(),
         }
+        if window:
+            event["window"] = "outside" if outside else "inside"
         write_json(DRIFT_EVENT_FILE, event)
         log.warning("PATCHGATE_DRIFT %s", json.dumps(findings))
     else:

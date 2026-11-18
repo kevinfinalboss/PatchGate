@@ -11,8 +11,10 @@
     Idempotent: steps whose validation already passes are skipped, and a plan whose digest
     was already applied successfully is only re-validated.
 
-    -Drift re-checks the last applied plan (agents and hardening controls) when its interval is
-    due, correcting or reporting drift and leaving drift-event.json for the provider to publish.
+    -Drift re-checks the last applied plan (agents, apps and hardening) when its interval is due,
+    correcting or reporting drift per category and leaving drift-event.json for the provider to
+    publish. Outside the profile's maintenance window every category only reports. -Drift -Force
+    (on-demand reconcile) ignores both the interval and the window.
 
     Exit codes: 0 success, 1 failure, 2 invalid input, 3010 reboot required (re-run after reboot).
 #>
@@ -43,6 +45,8 @@ $ComplianceFile = Join-Path $Root 'compliance.json'     # evidence: last result 
 $DriftEventFile = Join-Path $Root 'drift-event.json'    # picked up and published by the provider
 $DriftIntervals = @{ '30m' = 1800; '1h' = 3600; '2h' = 7200; '6h' = 21600; '12h' = 43200; '24h' = 86400 }
 $DriftSlackSeconds = 120
+$DriftCategories = @('agents', 'apps', 'hardening')
+$WeekDays = @('sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat')  # index = [int][DayOfWeek]
 $script:HardeningRebootRequired = $false
 $script:AppsRebootRequired = $false
 
@@ -459,6 +463,27 @@ function Get-Summary {
     return $summary
 }
 
+function Get-WindowStart {
+    # Start (Unix seconds) of the maintenance window occurrence containing $Now, or $null.
+    param($Window, [long]$Now)
+    $offsetText = [string](Get-Prop $Window 'utcOffset' '+00:00')
+    $sign = if ($offsetText.StartsWith('-')) { -1 } else { 1 }
+    $offsetParts = $offsetText.Substring(1).Split(':')
+    $offset = [TimeSpan]::FromMinutes($sign * ([int]$offsetParts[0] * 60 + [int]$offsetParts[1]))
+    $local = [DateTimeOffset]::FromUnixTimeSeconds($Now).ToOffset($offset)
+    $startParts = ([string]$Window.start).Split(':')
+    $length = [TimeSpan]::FromHours([int](([string]$Window.duration).TrimEnd('h')))
+    $days = @($Window.days)
+    foreach ($back in 0, 1) {
+        # An occurrence that started yesterday may cross midnight.
+        $day = $local.AddDays(-$back)
+        if ($days -notcontains $WeekDays[[int]$day.DayOfWeek]) { continue }
+        $start = New-Object DateTimeOffset ($day.Year, $day.Month, $day.Day, [int]$startParts[0], [int]$startParts[1], 0, $offset)
+        if ($local -ge $start -and $local -lt $start.Add($length)) { return $start.ToUnixTimeSeconds() }
+    }
+    return $null
+}
+
 function Invoke-Drift {
     # Returns the exit code for a drift run.
     if (-not (Test-Path $AppliedPlanFile)) {
@@ -468,14 +493,32 @@ function Invoke-Drift {
     $plan = Get-Content -Raw -Path $AppliedPlanFile | ConvertFrom-Json
     $driftCfg = Get-Prop $plan 'drift'
     $interval = Get-Prop $driftCfg 'interval' '30m'
-    $mode = Get-Prop $driftCfg 'mode' 'enforce'
+    $defaultMode = Get-Prop $driftCfg 'mode' 'enforce'
+    $window = Get-Prop $driftCfg 'window'
     $state = Read-State
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-    if ($interval -eq 'off') { Write-PatchgateLog 'drift checks are off for this profile'; return 0 }
-    if (-not $Force -and $state.ContainsKey('lastDriftAt') -and
-        ($now - [double]$state['lastDriftAt']) -lt ($DriftIntervals[$interval] - $DriftSlackSeconds)) {
-        Write-PatchgateLog "drift check not due (interval $interval)"
-        return 0
+    $opened = if ($null -ne $window) { Get-WindowStart -Window $window -Now $now } else { $null }
+    $outside = ($null -ne $window -and $null -eq $opened)
+    if (-not $Force) {
+        if ($interval -eq 'off') { Write-PatchgateLog 'drift checks are off for this profile'; return 0 }
+        # The first run of each window occurrence corrects what audit runs reported.
+        $windowCatchUp = ($null -ne $opened -and (-not $state.ContainsKey('lastWindowDriftAt') -or
+                [double]$state['lastWindowDriftAt'] -lt $opened))
+        if (-not $windowCatchUp -and $state.ContainsKey('lastDriftAt') -and
+            ($now - [double]$state['lastDriftAt']) -lt ($DriftIntervals[$interval] - $DriftSlackSeconds)) {
+            Write-PatchgateLog "drift check not due (interval $interval)"
+            return 0
+        }
+    }
+
+    $modes = [ordered]@{}
+    foreach ($category in $DriftCategories) {
+        $modes[$category] = if ($outside -and -not $Force) { 'audit' } else { [string](Get-Prop $driftCfg $category $defaultMode) }
+    }
+    $distinct = @($modes.Values | Sort-Object -Unique)
+    $mode = if ($distinct.Count -eq 1) { $distinct[0] } else { ($modes.Keys | ForEach-Object { "$_=$($modes[$_])" }) -join ', ' }
+    if ($outside) {
+        $mode = if ($Force) { "$mode (reconcile, maintenance window ignored)" } else { "$mode (outside maintenance window)" }
     }
 
     Write-PatchgateLog "== drift check (interval $interval, mode $mode)"
@@ -485,7 +528,7 @@ function Invoke-Drift {
     try {
         foreach ($step in $plan.steps) {
             if (-not ($step.PSObject.Properties.Name -contains 'validate') -or (Test-Step -Step $step)) { continue }
-            if ($mode -eq 'audit') { $findings += [ordered]@{ item = "agent:$($step.agent)"; status = 'non-compliant' }; continue }
+            if ($modes['agents'] -eq 'audit') { $findings += [ordered]@{ item = "agent:$($step.agent)"; status = 'non-compliant' }; continue }
             try {
                 [void](Install-Step -Step $step -WorkDir $work)
                 Assert-Step -Step $step
@@ -500,22 +543,28 @@ function Invoke-Drift {
     finally {
         Remove-Item -Path $work -Recurse -Force -ErrorAction SilentlyContinue
     }
-    foreach ($a in @(Invoke-AppReconcile -Plan $plan -Mode $mode)) {
+    foreach ($a in @(Invoke-AppReconcile -Plan $plan -Mode $modes['apps'])) {
         if ($a.status -ne 'compliant') { $findings += [ordered]@{ item = $a.item; status = $a.status } }
     }
-    foreach ($r in @(Invoke-Hardening -Hardening (Get-Prop $plan 'hardening') -Mode $mode)) {
+    foreach ($r in @(Invoke-Hardening -Hardening (Get-Prop $plan 'hardening') -Mode $modes['hardening'])) {
         if ($r.status -ne 'compliant') { $findings += [ordered]@{ item = "control:$($r.control)"; status = $r.status } }
     }
 
-    Save-State @{ lastDriftAt = $now }
+    $runState = @{ lastDriftAt = $now }
+    if ($null -ne $opened) { $runState['lastWindowDriftAt'] = $now }
+    Save-State $runState
     if ($findings.Count -gt 0) {
-        Write-JsonFile -Path $DriftEventFile -Data ([ordered]@{
-                profile    = $plan.profile
-                digest     = $plan.digest
-                mode       = $mode
-                findings   = $findings
-                detectedAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-            })
+        $driftEvent = [ordered]@{
+            profile    = $plan.profile
+            digest     = $plan.digest
+            mode       = $mode
+            modes      = $modes
+            trigger    = if ($Force) { 'reconcile' } else { 'schedule' }
+            findings   = $findings
+            detectedAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        }
+        if ($null -ne $window) { $driftEvent['window'] = if ($outside) { 'outside' } else { 'inside' } }
+        Write-JsonFile -Path $DriftEventFile -Data $driftEvent
         Write-PatchgateLog ("PATCHGATE_DRIFT " + ($findings | ConvertTo-Json -Compress -Depth 4)) 'WARN'
     }
     else {

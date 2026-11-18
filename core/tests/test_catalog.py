@@ -210,12 +210,48 @@ def test_drift_defaults_and_no_hardening(tmp_path: Path) -> None:
     write_catalog(tmp_path, profile("p"))
     plan = Catalog.load(tmp_path).compile("p")
     assert plan["hardening"] is None
-    assert plan["drift"] == {"interval": "30m", "mode": "enforce"}
+    assert plan["drift"] == {
+        "interval": "30m",
+        "mode": "enforce",
+        "agents": "enforce",
+        "apps": "enforce",
+        "hardening": "enforce",
+    }
 
 
 def test_drift_interval_must_be_supported() -> None:
     doc = profile("p", drift={"interval": "45m"})
     assert validate_document(doc)
+
+
+def test_drift_mode_per_category_and_window(tmp_path: Path) -> None:
+    window = {"days": ["sat", "sun"], "start": "22:00", "duration": "4h"}
+    drift = {"mode": "audit", "apps": "enforce", "window": window}
+    write_catalog(tmp_path, profile("p", drift=drift))
+    plan = Catalog.load(tmp_path).compile("p")["drift"]
+    assert (plan["agents"], plan["apps"], plan["hardening"]) == ("audit", "enforce", "audit")
+    assert plan["window"] == {**window, "utcOffset": "+00:00"}
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        {"days": ["mon"], "start": "24:00", "duration": "2h"},
+        {"days": ["mon"], "start": "22:00", "duration": "0h"},
+        {"days": ["mon"], "start": "22:00", "duration": "25h"},
+        {"days": ["monday"], "start": "22:00", "duration": "2h"},
+        {"days": [], "start": "22:00", "duration": "2h"},
+        {"days": ["mon"], "start": "22:00", "duration": "2h", "utcOffset": "-3"},
+        {"days": ["mon"], "start": "22:00"},
+        {"days": ["mon"], "start": "22:00", "duration": "2h", "timezone": "UTC"},
+    ],
+)
+def test_invalid_maintenance_windows_are_rejected(window: dict[str, Any]) -> None:
+    assert validate_document(profile("p", drift={"window": window}))
+
+
+def test_drift_category_mode_must_be_known() -> None:
+    assert validate_document(profile("p", drift={"hardening": "ignore"}))
 
 
 def test_every_real_control_has_cis_reference_and_fits_in_plans() -> None:

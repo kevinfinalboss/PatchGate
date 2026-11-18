@@ -102,6 +102,15 @@ sequenceDiagram
 
 Triggered by events rather than `user_data` so every run is visible, retried and auditable ([ADR 0004](adr/0004-event-driven-bootstrap.md)).
 
+### Drift (Day 2)
+
+A State Manager association runs the `Patchgate-Drift` document every 30 minutes. The executor in
+the VM re-checks the last applied plan when the profile's interval is due, corrects or reports per
+category (`agents`, `apps`, `hardening`), reports only outside the profile's maintenance window,
+and publishes findings as `io.patchgate` events that the hub emails. `patchgate-cli instance
+reconcile` sends the same document with `Force=true` to check now
+([ADR 0009](adr/0009-drift-modes-per-category-and-maintenance-window.md)).
+
 ### Patching with approval (Day 2)
 
 ```mermaid

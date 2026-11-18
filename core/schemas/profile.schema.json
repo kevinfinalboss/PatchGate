@@ -174,7 +174,22 @@
                 "audit"
               ],
               "default": "enforce",
-              "description": "enforce corrects drift; audit only reports it."
+              "description": "enforce corrects drift; audit only reports it. Default for every category."
+            },
+            "agents": {
+              "$ref": "#/$defs/driftMode",
+              "description": "Overrides mode for agents."
+            },
+            "apps": {
+              "$ref": "#/$defs/driftMode",
+              "description": "Overrides mode for apps (reinstall, version fixes and prune)."
+            },
+            "hardening": {
+              "$ref": "#/$defs/driftMode",
+              "description": "Overrides mode for hardening controls and baselines."
+            },
+            "window": {
+              "$ref": "#/$defs/maintenanceWindow"
             }
           }
         },
@@ -222,6 +237,57 @@
             "absent"
           ],
           "default": "present"
+        }
+      }
+    },
+    "driftMode": {
+      "enum": [
+        "enforce",
+        "audit"
+      ]
+    },
+    "maintenanceWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Drift corrects only inside this window; outside it, every category only reports. Bootstrap and tag changes are not affected.",
+      "required": [
+        "days",
+        "start",
+        "duration"
+      ],
+      "properties": {
+        "days": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Days on which the window starts (local time).",
+          "items": {
+            "enum": [
+              "mon",
+              "tue",
+              "wed",
+              "thu",
+              "fri",
+              "sat",
+              "sun"
+            ]
+          }
+        },
+        "start": {
+          "type": "string",
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+          "description": "Local start time, HH:MM."
+        },
+        "duration": {
+          "type": "string",
+          "pattern": "^([1-9]|1[0-9]|2[0-4])h$",
+          "description": "Length in whole hours, 1h-24h. A window may cross midnight."
+        },
+        "utcOffset": {
+          "type": "string",
+          "pattern": "^[+-](0[0-9]|1[0-4]):[0-5][0-9]$",
+          "default": "+00:00",
+          "description": "Fixed offset of the local time from UTC, for example -03:00."
         }
       }
     }

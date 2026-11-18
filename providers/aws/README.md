@@ -62,7 +62,14 @@ patchgate-cli --config-profile hub rollback appset dotnet8-team-a --version 2
 
 patchgate-cli --config-profile hub --profile dev instance show i-0123456789abcdef0
 patchgate-cli --config-profile hub --profile dev instance appsets i-0123456789abcdef0 --add dotnet8
+patchgate-cli --profile dev instance reconcile i-0123456789abcdef0   # drift check now
 ```
+
+`instance reconcile` runs the `Patchgate-Drift` document with `Force=true`: it ignores the
+profile's interval and maintenance window, corrects according to the per-category modes, waits
+for the result and prints the end of the output (`--no-wait` returns right away). It needs
+`ssm:SendCommand` on that document and the instance, and `ssm:GetCommandInvocation`, in the
+account that owns the instance.
 
 Every write is validated (schema and references). Built-in documents (`managedBy = patchgate`) are
 re-applied by each release; copy them to customise. Direct console edits are allowed, but invalid

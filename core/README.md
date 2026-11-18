@@ -1,42 +1,20 @@
 # core/
 
-The cloud-agnostic heart of Patchgate: **what** should be installed, hardened and patched, and the rules that govern it. Nothing here knows which cloud it runs on.
+The cloud-agnostic heart of Patchgate: **what** should be installed, hardened and kept in place, and the rules that govern it. Nothing here knows which cloud it runs on.
 
 | Folder | Purpose |
 |---|---|
-| [`schemas/`](schemas/) | JSON Schemas for `Agent`, `Profile` and `PatchPolicy` |
+| [`schemas/`](schemas/) | JSON Schemas for `Agent`, `Profile`, `AppSet`, `Control` and `Baseline` (`v1alpha1`) |
 | [`catalog/agents/`](catalog/agents/) | Installable agents (templates included) |
 | [`catalog/profiles/`](catalog/profiles/) | Profiles selected by the `Patchgate:Profile` tag |
-| [`catalog/policies/`](catalog/policies/) | Patch policies: rings, windows, approvers, rollback |
-| [`scripts/`](scripts/) | Scripts executed inside the VM (Linux and Windows) |
-| [`hardening/`](hardening/) | CIS hardening content (Ansible and DSC) |
-| [`lib/`](lib/) | Python library: rings, approvals, compliance, CloudEvents |
+| [`catalog/appsets/`](catalog/appsets/) | App bundles requested with the `Patchgate:AppSets` tag |
+| [`catalog/controls/`](catalog/controls/) | Hardening controls for the native `controls` engine |
+| [`catalog/baselines/`](catalog/baselines/) | Pinned third-party hardening content (`ansible`, `dsc` engines) |
+| [`scripts/`](scripts/) | Executors that run inside the VM (Linux and Windows) |
+| [`lib/`](lib/) | Python library: plan composition, schema validation, catalog CLI |
 | [`tests/`](tests/) | Unit tests |
 
-## Example (draft, `v1alpha1`)
-
-```yaml
-# catalog/agents/example-edr.yaml
-apiVersion: patchgate.io/v1alpha1
-kind: Agent
-metadata:
-  name: example-edr
-spec:
-  platforms: [windows, linux]
-  install:
-    windows:
-      method: msi
-      source: s3://<artifacts-bucket>/agents/example-edr-1.2.3.msi
-      sha256: "<sha256>"
-      args: "/quiet LICENSE={{secret:example-edr-license}}"
-    linux:
-      method: package
-      source: s3://<artifacts-bucket>/agents/example-edr-1.2.3.rpm
-      sha256: "<sha256>"
-  validate:
-    windows: "Get-Service ExampleEdr"
-    linux: "systemctl is-active example-edr"
-```
+## Example profile
 
 ```yaml
 # catalog/profiles/web-windows.yaml
@@ -45,13 +23,38 @@ kind: Profile
 metadata:
   name: web-windows
 spec:
-  agents: [cloudwatch-agent, example-edr]
-  chocolatey:
+  platform: windows
+  agents: [cloudwatch-agent, microsoft-defender]
+  apps:
     - name: 7zip
-    - name: dotnet-8.0-runtime
-      version: "8.0.11"
-  hardening: cis-level1
-  ring: 1
+    - name: notepadplusplus
+  allowedAppSets: [dotnet8, nodejs-lts]
+  hardening:
+    engine: controls
+    level: baseline
+  drift:
+    interval: 30m        # off | 30m | 1h | 2h | 6h | 12h | 24h
+    mode: enforce        # default for every category: enforce corrects, audit only reports
+    hardening: audit     # optional override per category: agents, apps, hardening
+    window:              # optional: outside the window every category only reports
+      days: [mon, tue, wed, thu, fri]
+      start: "22:00"
+      duration: 4h       # 1h-24h, may cross midnight
+      utcOffset: "-03:00"
 ```
 
-The schemas in `schemas/` are the source of truth; these examples will be kept in sync with them.
+### Drift
+
+Drift checks re-validate agents, apps and hardening on the profile's `interval`.
+
+- **Per category:** `mode` is the default; `agents`, `apps` and `hardening` override it.
+- **Maintenance window:** outside it, every category only reports (`audit`). The first check
+  inside each window occurrence runs even if the interval has not elapsed, so what was reported
+  outside the window gets corrected. Bootstrap and tag changes are not affected by the window.
+- **On demand:** `patchgate-cli instance reconcile <id>` runs a check now, ignoring the interval
+  and the window.
+
+See [ADR 0007](../docs/adr/0007-pluggable-hardening-engines.md) and
+[ADR 0009](../docs/adr/0009-drift-modes-per-category-and-maintenance-window.md).
+
+The schemas in `schemas/` are the source of truth; this example is kept in sync with them.

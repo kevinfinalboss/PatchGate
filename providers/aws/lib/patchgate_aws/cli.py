@@ -12,6 +12,7 @@ Examples:
     patchgate-cli rollback appset dotnet8 --version 2
     patchgate-cli instance show i-0123456789abcdef0
     patchgate-cli instance appsets i-0123456789abcdef0 --add dotnet8
+    patchgate-cli instance reconcile i-0123456789abcdef0
 """
 
 from __future__ import annotations
@@ -19,12 +20,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import boto3
 import yaml
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 
 from patchgate.plan import KINDS, CatalogError, Document, Library
 from patchgate.schema import validate_document
@@ -44,6 +47,11 @@ KIND_ALIASES = {
 }
 TAG_PROFILE = "Patchgate:Profile"
 TAG_APPSETS = "Patchgate:AppSets"
+TAG_MANAGED = "Patchgate:Managed"
+DRIFT_DOCUMENT = "Patchgate-Drift"
+COMMAND_DONE = {"Success", "Failed", "Cancelled", "TimedOut", "Undeliverable", "Terminated"}
+POLL_SECONDS = 5.0
+OUTPUT_TAIL_LINES = 20
 DEFAULT_PROFILES = {"linux": "base-linux", "windows": "base-windows"}
 
 
@@ -267,6 +275,50 @@ class Cli:
         )
         return 0
 
+    def cmd_instance_reconcile(self) -> int:
+        _, instance, tags = self.instance()
+        instance_id = instance["InstanceId"]
+        if tags.get(TAG_MANAGED) != "true":
+            raise CliError(f"instance {instance_id} is not managed by Patchgate ({TAG_MANAGED})")
+        if instance["State"]["Name"] != "running":
+            raise CliError(f"instance {instance_id} is {instance['State']['Name']}, not running")
+        ssm = self.session.client("ssm")
+        command = ssm.send_command(
+            InstanceIds=[instance_id],
+            DocumentName=DRIFT_DOCUMENT,
+            Parameters={"Force": ["true"]},
+            Comment="patchgate-cli instance reconcile",
+        )["Command"]
+        self.print(f"reconcile started on {instance_id} (command {command['CommandId']})")
+        if self.args.no_wait:
+            return 0
+        invocation = self.wait_for_command(ssm, command["CommandId"], instance_id)
+        output = invocation.get("StandardOutputContent", "").rstrip().splitlines()
+        for line in output[-OUTPUT_TAIL_LINES:]:
+            self.print(f"  {line}")
+        status = invocation["Status"]
+        self.print(f"reconcile {status.lower()} on {instance_id}")
+        return 0 if status == "Success" else 1
+
+    def wait_for_command(self, ssm: Any, command_id: str, instance_id: str) -> dict[str, Any]:
+        deadline = time.monotonic() + self.args.timeout
+        while True:
+            try:
+                invocation: dict[str, Any] = ssm.get_command_invocation(
+                    CommandId=command_id, InstanceId=instance_id
+                )
+                if invocation["Status"] in COMMAND_DONE:
+                    return invocation
+            except ClientError as exc:  # not registered yet right after send_command
+                if exc.response["Error"]["Code"] != "InvocationDoesNotExist":
+                    raise
+            if time.monotonic() >= deadline:
+                raise CliError(
+                    f"command {command_id} still running after {self.args.timeout}s; "
+                    "check it in the SSM console"
+                )
+            time.sleep(POLL_SECONDS)
+
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="patchgate-cli", description=__doc__,
@@ -302,7 +354,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("name")
     s.add_argument("--version", type=int, required=True)
 
-    instance = sub.add_parser("instance", help="inspect or assign app sets to an instance")
+    instance = sub.add_parser("instance", help="inspect, assign app sets or reconcile instances")
     isub = instance.add_subparsers(dest="instance_command", required=True)
     s = isub.add_parser("show")
     s.add_argument("instance_id")
@@ -311,6 +363,13 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--add", action="append")
     s.add_argument("--remove", action="append")
     s.add_argument("--set", help="replace with a comma-separated list ('' clears)")
+    s = isub.add_parser(
+        "reconcile",
+        help="run the drift check now (ignores the profile's interval and maintenance window)",
+    )
+    s.add_argument("instance_id")
+    s.add_argument("--no-wait", action="store_true", help="return once the command is sent")
+    s.add_argument("--timeout", type=int, default=1800, help="seconds to wait (default 1800)")
     return p
 
 

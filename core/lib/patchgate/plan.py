@@ -24,6 +24,8 @@ KINDS = ("Agent", "Profile", "Control", "Baseline", "AppSet")
 # Hardening levels are cumulative: a profile at level N gets every control with level <= N.
 LEVELS = {"baseline": 0, "cis-level1": 1}
 DEFAULT_DRIFT = {"interval": "30m", "mode": "enforce"}
+DRIFT_CATEGORIES = ("agents", "apps", "hardening")
+DEFAULT_UTC_OFFSET = "+00:00"
 BASELINE_ENGINES = ("ansible", "dsc")  # engines that run a Baseline instead of Control documents
 
 Document = dict[str, Any]
@@ -136,7 +138,7 @@ class Library:
             "appSets": requested,
             "apps": self._apps(profile_name, spec, requested),
             "hardening": self._hardening(spec),
-            "drift": {**DEFAULT_DRIFT, **spec.get("drift", {})},
+            "drift": drift_settings(spec.get("drift", {})),
         }
         body["digest"] = digest(body)
         return body
@@ -221,6 +223,20 @@ def _unique(names: Iterable[str]) -> list[str]:
         if name and name not in seen:
             seen.append(name)
     return seen
+
+
+def drift_settings(drift: Document) -> Document:
+    """Drift block of a plan: explicit mode per category and a normalised maintenance window.
+
+    `mode` stays in the plan as the default, so executors that predate per-category modes keep
+    working; current executors read `agents`, `apps` and `hardening`.
+    """
+    settings: Document = {**DEFAULT_DRIFT, **drift}
+    for category in DRIFT_CATEGORIES:
+        settings.setdefault(category, settings["mode"])
+    if "window" in settings:
+        settings["window"] = {"utcOffset": DEFAULT_UTC_OFFSET, **settings["window"]}
+    return settings
 
 
 def digest(body: Document) -> str:

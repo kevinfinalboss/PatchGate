@@ -108,7 +108,7 @@ LINUX_DRIFT = f"""set -uo pipefail
 INSTALLER=/opt/patchgate/patchgate_install.py
 EVENT_FILE=/var/lib/patchgate/drift-event.json
 if [ ! -f "$INSTALLER" ]; then echo "not bootstrapped by Patchgate; skipping"; exit 0; fi
-python3 "$INSTALLER" --drift
+if [ "{{{{ Force }}}}" = "true" ]; then python3 "$INSTALLER" --drift --force; else python3 "$INSTALLER" --drift; fi
 rc=$?
 if [ -f "$EVENT_FILE" ]; then
   TOKEN=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
@@ -135,7 +135,7 @@ exit $rc
 WINDOWS_DRIFT = f"""$installer = Join-Path $env:ProgramData 'Patchgate\\bin\\Install-PatchgatePlan.ps1'
 $eventFile = Join-Path $env:ProgramData 'Patchgate\\drift-event.json'
 if (-not (Test-Path $installer)) {{ 'not bootstrapped by Patchgate; skipping'; exit 0 }}
-& $installer -Drift
+if ('{{{{ Force }}}}' -eq 'true') {{ & $installer -Drift -Force }} else {{ & $installer -Drift }}
 $rc = $LASTEXITCODE
 if (Test-Path $eventFile) {{
   $token = Invoke-RestMethod -Method Put -Uri 'http://169.254.169.254/latest/api/token' -Headers @{{ 'X-aws-ec2-metadata-token-ttl-seconds' = '60' }}
@@ -170,7 +170,15 @@ exit $rc
 def drift_document() -> dict[str, Any]:
     return {
         "schemaVersion": "2.2",
-        "description": "Patchgate drift check: re-validates agents and hardening, publishes findings.",
+        "description": "Patchgate drift check: re-validates agents, apps and hardening, publishes findings.",
+        "parameters": {
+            "Force": {
+                "type": "String",
+                "description": "true runs now, ignoring the interval and maintenance window (reconcile).",
+                "allowedValues": ["false", "true"],
+                "default": "false",
+            }
+        },
         "mainSteps": [
             {
                 "action": "aws:runShellScript",
