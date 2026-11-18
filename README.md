@@ -7,7 +7,9 @@
 Cloud-agnostic platform to harden, bootstrap and patch Linux & Windows fleets across accounts — with approval gates and automatic rollback. Built on AWS.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-![Status](https://img.shields.io/badge/status-phase%204c%20%E2%80%94%20next-yellow)
+![Status](https://img.shields.io/badge/status-phase%204c--1%20in%20progress-yellow)
+
+**[Project overview: flows, architecture and status →](https://kevinfinalboss.github.io/PatchGate/)**
 
 </div>
 
@@ -77,6 +79,7 @@ core/         Cloud-agnostic: schemas, catalog, in-VM scripts, hardening, Python
 providers/    Cloud-specific implementations of the provider contract (aws/ first)
 examples/     Ready-to-use setups (single-account, multi-account)
 docs/         Architecture, roadmap, ADRs, security
+site/         Project overview page published to GitHub Pages
 ```
 
 ## Documentation

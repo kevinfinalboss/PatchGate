@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Patchgate</title>
+<meta name="description" content="Patchgate hardens, bootstraps and patches Linux and Windows fleets across AWS accounts, with drift correction and gated, ring-based changes.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f766e'/%3E%3Cpath d='M9 16.5l4.5 4.5L23 11.5' stroke='white' stroke-width='3.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: #dfe3e8;
+  --text: #17202a;
+  --muted: #5b6673;
+  --accent: #0f766e;
+  --accent-soft: #e0f2ef;
+  --accent-text: #0b5e57;
+  --done: #15803d;
+  --done-soft: #dcfce7;
+  --wip: #b45309;
+  --wip-soft: #fef3c7;
+  --plan: #475569;
+  --plan-soft: #e2e8f0;
+  --hub: #0f766e;
+  --spoke: #2563eb;
+  --mgmt: #7c3aed;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1117;
+    --surface: #151b23;
+    --surface-2: #1c232d;
+    --border: #2a333f;
+    --text: #e6edf3;
+    --muted: #9aa6b2;
+    --accent: #2dd4bf;
+    --accent-soft: #10302d;
+    --accent-text: #5eead4;
+    --done: #4ade80;
+    --done-soft: #12301d;
+    --wip: #fbbf24;
+    --wip-soft: #362a0b;
+    --plan: #94a3b8;
+    --plan-soft: #222b36;
+    --hub: #2dd4bf;
+    --spoke: #60a5fa;
+    --mgmt: #a78bfa;
+    --shadow: none;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --surface: #151b23;
+  --surface-2: #1c232d;
+  --border: #2a333f;
+  --text: #e6edf3;
+  --muted: #9aa6b2;
+  --accent: #2dd4bf;
+  --accent-soft: #10302d;
+  --accent-text: #5eead4;
+  --done: #4ade80;
+  --done-soft: #12301d;
+  --wip: #fbbf24;
+  --wip-soft: #362a0b;
+  --plan: #94a3b8;
+  --plan-soft: #222b36;
+  --hub: #2dd4bf;
+  --spoke: #60a5fa;
+  --mgmt: #a78bfa;
+  --shadow: none;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent-text); text-underline-offset: 3px; }
+code { font: .88em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--surface-2); padding: .1em .35em; border-radius: 5px; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+
+/* nav */
+nav.top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+nav.top .wrap { display: flex; align-items: center; gap: 20px; height: 56px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); text-decoration: none; letter-spacing: -.01em; }
+.brand svg { width: 26px; height: 26px; }
+.links { display: flex; gap: 18px; margin-left: auto; overflow-x: auto; scrollbar-width: none; }
+.links a { color: var(--muted); text-decoration: none; font-size: 14px; white-space: nowrap; }
+.links a:hover { color: var(--text); }
+.theme { border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 8px; width: 34px; height: 34px; cursor: pointer; flex: none; display: grid; place-items: center; }
+.theme svg { width: 16px; height: 16px; }
+
+/* hero */
+header.hero { padding: 64px 0 40px; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--wip); background: var(--wip-soft); padding: 4px 10px; border-radius: 999px; }
+.eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+h1 { font-size: clamp(36px, 6vw, 56px); line-height: 1.05; letter-spacing: -.03em; margin: 18px 0 12px; }
+.tagline { font-size: clamp(18px, 2.4vw, 22px); color: var(--muted); max-width: 720px; margin: 0 0 28px; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 9px; font-weight: 600; font-size: 15px; text-decoration: none; border: 1px solid var(--border); color: var(--text); background: var(--surface); box-shadow: var(--shadow); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] .btn.primary { color: #04201d; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn.primary { color: #04201d; } }
+.btn svg { width: 16px; height: 16px; }
+
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 40px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: var(--shadow); }
+.stat b { display: block; font-size: 26px; letter-spacing: -.02em; }
+.stat span { color: var(--muted); font-size: 14px; }
+
+/* sections */
+section { padding: 48px 0; border-top: 1px solid var(--border); }
+h2 { font-size: 28px; letter-spacing: -.02em; margin: 0 0 8px; }
+.lead { color: var(--muted); margin: 0 0 28px; max-width: 760px; }
+h3 { font-size: 18px; margin: 0 0 6px; letter-spacing: -.01em; }
+
+.grid { display: grid; gap: 14px; }
+.g4 { grid-template-columns: repeat(4, 1fr); }
+.g3 { grid-template-columns: repeat(3, 1fr); }
+.g2 { grid-template-columns: repeat(2, 1fr); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; box-shadow: var(--shadow); }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.card .icon { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); margin-bottom: 12px; }
+.card .icon svg { width: 20px; height: 20px; }
+
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; vertical-align: 2px; }
+.pill.done { color: var(--done); background: var(--done-soft); }
+.pill.wip { color: var(--wip); background: var(--wip-soft); }
+.pill.plan { color: var(--plan); background: var(--plan-soft); }
+
+/* architecture */
+.diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px; box-shadow: var(--shadow); overflow-x: auto; }
+.diagram svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.diagram text { font-family: inherit; fill: var(--text); }
+.diagram .muted { fill: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; color: var(--muted); font-size: 14px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+/* flows */
+.flow { counter-reset: step; display: grid; gap: 0; }
+.step { display: grid; grid-template-columns: 40px 1fr; gap: 14px; position: relative; padding-bottom: 18px; }
+.step:last-child { padding-bottom: 0; }
+.step::before { counter-increment: step; content: counter(step); width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; background: var(--accent-soft); color: var(--accent-text); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); z-index: 1; }
+.step::after { content: ""; position: absolute; left: 15.5px; top: 32px; bottom: 0; width: 1px; background: var(--border); }
+.step:last-child::after { display: none; }
+.step h4 { margin: 4px 0 2px; font-size: 16px; }
+.step p { margin: 0; color: var(--muted); font-size: 15px; }
+.step .where { font-size: 12px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
+.where.hub { color: var(--hub); } .where.spoke { color: var(--spoke); } .where.vm { color: var(--wip); } .where.you { color: var(--mgmt); }
+.step.pending::before { background: var(--plan-soft); color: var(--plan); border-color: var(--border); }
+
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+.tab { border: 1px solid var(--border); background: var(--surface); color: var(--muted); padding: 8px 14px; border-radius: 9px; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.tab[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] .tab[aria-selected="true"] { color: #04201d; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tab[aria-selected="true"] { color: #04201d; } }
+.panel { display: grid; grid-template-columns: 1.3fr 1fr; gap: 24px; align-items: start; }
+.panel[hidden] { display: none; }
+.aside { background: var(--surface-2); border-radius: 12px; padding: 18px; font-size: 15px; }
+.aside h4 { margin: 0 0 8px; font-size: 15px; }
+.aside ul { margin: 0; padding-left: 18px; color: var(--muted); }
+.aside li { margin: 4px 0; }
+
+/* tables */
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+.tablewrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; box-shadow: var(--shadow); }
+.tablewrap table { min-width: 620px; }
+tr:last-child td { border-bottom: 0; }
+
+/* timeline */
+.timeline { display: grid; gap: 10px; }
+.phase { display: grid; grid-template-columns: 120px 1fr auto; gap: 16px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); }
+.phase .num { font-weight: 700; color: var(--muted); font-size: 14px; padding-top: 2px; }
+.phase h3 { font-size: 16px; margin: 0 0 2px; }
+.phase p { margin: 0; color: var(--muted); font-size: 14.5px; }
+.phase.current { border-color: color-mix(in srgb, var(--wip) 55%, var(--border)); }
+
+/* lessons */
+.lesson h3 { font-size: 16px; }
+.lesson .fix { margin-top: 8px; color: var(--text); font-size: 14.5px; }
+.lesson .fix::before { content: "Fix: "; font-weight: 700; color: var(--done); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 5px 12px; font-size: 14px; }
+
+footer { border-top: 1px solid var(--border); padding: 28px 0 48px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
+
+@media (max-width: 900px) {
+  .g4 { grid-template-columns: repeat(2, 1fr); }
+  .g3 { grid-template-columns: 1fr 1fr; }
+  .panel { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .links { display: none; }
+  .theme { margin-left: auto; }
+  .g4, .g3, .g2 { grid-template-columns: 1fr; }
+  header.hero { padding-top: 40px; }
+  .phase { grid-template-columns: 1fr; gap: 6px; }
+  section { padding: 36px 0; }
+}
+</style>
+</head>
+<body>
+
+<nav class="top" aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="var(--accent)"/><path d="M9 16.5l4.5 4.5L23 11.5" stroke="#fff" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Patchgate
+    </a>
+    <div class="links">
+      <a href="#what">What it does</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#flows">Flows</a>
+      <a href="#hardening">Hardening</a>
+      <a href="#status">Status</a>
+      <a href="#lessons">Lessons</a>
+    </div>
+    <button class="theme" id="theme" type="button" aria-label="Toggle dark mode">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <span class="eyebrow">Phase 4c-1 in progress: approval engine</span>
+    <h1>Secure baselines.<br>Gated changes.</h1>
+    <p class="tagline">Patchgate bootstraps, hardens and keeps Linux and Windows fleets in shape across AWS accounts. Every instance is configured from tags, corrected when it drifts, and changed ring by ring with approval.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/kevinfinalboss/PatchGate">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5z"/></svg>
+        View on GitHub
+      </a>
+      <a class="btn" href="https://github.com/kevinfinalboss/PatchGate/blob/main/docs/roadmap.md">Roadmap</a>
+      <a class="btn" href="https://github.com/kevinfinalboss/PatchGate/tree/main/docs/adr">Design decisions (ADRs)</a>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b>198 / 198</b><span>CIS L1 rules compliant on re-run, Amazon Linux 2023</span></div>
+      <div class="stat"><b>293 / 293</b><span>CIS L1 rules compliant on re-run, Windows Server 2022</span></div>
+      <div class="stat"><b>~3 min</b><span>from launch to a configured instance, Linux and Windows</span></div>
+      <div class="stat"><b>232 tests</b><span>plus 491 IaC security checks passing in CI</span></div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<section id="what">
+  <div class="wrap">
+    <h2>What it does</h2>
+    <p class="lead">You describe what an instance should have in a catalog (agents, apps, hardening, drift rules). Instances pick it up with a tag. Patchgate takes it from there, in every account of the organization, from one central hub.</p>
+    <div class="grid g4">
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.9A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22.4 22.4 0 0 1-4 2z"/></svg></div>
+        <h3>Bootstrap from tags</h3>
+        <p>A new instance tagged <code>Patchgate:Managed=true</code> gets its agents, apps and hardening in about three minutes, verified by checksum.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <h3>CIS hardening + drift</h3>
+        <p>Three engines (native controls, Ansible, DSC) with per-rule evidence. Manual changes are corrected or reported, per category and inside a maintenance window.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/></svg></div>
+        <h3>App lifecycle</h3>
+        <p>App sets per instance, pinned versions, install, upgrade and remove. Pruning only ever removes what Patchgate installed itself.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
+        <h3>Gated changes <span class="pill wip">in progress</span></h3>
+        <p>Profile and app set changes roll out ring by ring (dev, then prod), with email approval per approver group and automatic revert on failure.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="architecture">
+  <div class="wrap">
+    <h2>Architecture</h2>
+    <p class="lead">Hub and spoke across an AWS Organization. Workload accounts only forward events and expose one execution role; all decisions are made in the hub. The catalog, in-VM executors and hardening engines live in a cloud-agnostic core.</p>
+
+    <div class="diagram" role="img" aria-label="Architecture: workload accounts forward EC2 events to the hub event bus; the hub workflow resolves the plan from DynamoDB and runs it on the instance through SSM using a cross-account role; drift findings flow back to the hub and are emailed.">
+      <svg viewBox="0 0 1040 470" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill: var(--muted)"/></marker>
+        </defs>
+
+        <!-- Management -->
+        <rect x="16" y="20" width="230" height="430" rx="14" style="fill: color-mix(in srgb, var(--mgmt) 7%, var(--surface)); stroke: var(--mgmt)" stroke-width="1.5"/>
+        <text x="32" y="48" font-size="13" font-weight="700" style="fill: var(--mgmt)">MANAGEMENT ACCOUNT</text>
+        <g font-size="13.5">
+          <rect x="32" y="66" width="198" height="56" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="46" y="90" font-weight="600">Organizations + OUs</text>
+          <text x="46" y="108" class="muted" font-size="12.5">Security, Workloads</text>
+          <rect x="32" y="134" width="198" height="56" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="46" y="158" font-weight="600">Spoke StackSet</text>
+          <text x="46" y="176" class="muted" font-size="12.5">auto-deploys to Workloads OU</text>
+          <rect x="32" y="202" width="198" height="56" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="46" y="226" font-weight="600">Budgets + SCP kill switch</text>
+          <text x="46" y="244" class="muted" font-size="12.5">no RunInstances above US$25</text>
+          <rect x="32" y="270" width="198" height="56" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="46" y="294" font-weight="600">Organization CloudTrail</text>
+          <text x="46" y="312" class="muted" font-size="12.5">90-day retention</text>
+          <rect x="32" y="352" width="198" height="80" rx="9" style="fill: var(--surface-2); stroke: var(--border)" stroke-dasharray="4 4"/>
+          <text x="46" y="377" font-weight="600">You</text>
+          <text x="46" y="396" class="muted" font-size="12.5">patchgate-cli: profiles,</text>
+          <text x="46" y="413" class="muted" font-size="12.5">app sets, accounts, approvers</text>
+        </g>
+
+        <!-- Hub -->
+        <rect x="290" y="20" width="420" height="430" rx="14" style="fill: color-mix(in srgb, var(--hub) 7%, var(--surface)); stroke: var(--hub)" stroke-width="1.5"/>
+        <text x="306" y="48" font-size="13" font-weight="700" style="fill: var(--hub)">HUB ACCOUNT</text>
+        <g font-size="13.5">
+          <rect x="306" y="66" width="180" height="74" rx="9" style="fill: var(--surface); stroke: var(--hub)" stroke-width="1.5"/>
+          <text x="320" y="90" font-weight="600">Bootstrap workflow</text>
+          <text x="320" y="108" class="muted" font-size="12.5">Step Functions: resolve,</text>
+          <text x="320" y="125" class="muted" font-size="12.5">lock, run, tag, notify</text>
+
+          <rect x="306" y="166" width="180" height="56" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="320" y="190" font-weight="600">Resolver Lambda</text>
+          <text x="320" y="208" class="muted" font-size="12.5">tags → ring → plan</text>
+
+          <rect x="306" y="250" width="180" height="182" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="320" y="274" font-weight="600">DynamoDB</text>
+          <text x="320" y="298" class="muted" font-size="12.5">config: catalog, accounts</text>
+          <text x="320" y="320" class="muted" font-size="12.5">history: every version</text>
+          <text x="320" y="342" class="muted" font-size="12.5">releases: per ring / group</text>
+          <text x="320" y="364" class="muted" font-size="12.5">locks: one run per instance</text>
+          <text x="320" y="386" class="muted" font-size="12.5">audit Lambda on the stream</text>
+          <text x="320" y="408" class="muted" font-size="12.5">(validates, alerts, pins)</text>
+
+          <rect x="514" y="66" width="180" height="56" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="528" y="90" font-weight="600">Central event bus</text>
+          <text x="528" y="108" class="muted" font-size="12.5">org-restricted policy</text>
+
+          <rect x="514" y="150" width="180" height="56" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="528" y="174" font-weight="600">Drift notifications</text>
+          <text x="528" y="192" class="muted" font-size="12.5">Step Functions</text>
+
+          <rect x="514" y="230" width="180" height="56" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="528" y="254" font-weight="600">SNS email</text>
+          <text x="528" y="272" class="muted" font-size="12.5">results, drift, alerts</text>
+
+          <rect x="514" y="330" width="180" height="102" rx="9" style="fill: var(--surface-2); stroke: var(--border)" stroke-dasharray="4 4"/>
+          <text x="528" y="354" font-weight="600">Rollout + approvals</text>
+          <text x="528" y="372" class="muted" font-size="12.5">rings, email approval,</text>
+          <text x="528" y="389" class="muted" font-size="12.5">revert on failure</text>
+          <text x="528" y="414" font-size="12" font-weight="700" style="fill: var(--wip)">IN PROGRESS</text>
+        </g>
+
+        <!-- Spokes -->
+        <rect x="754" y="20" width="270" height="430" rx="14" style="fill: color-mix(in srgb, var(--spoke) 7%, var(--surface)); stroke: var(--spoke)" stroke-width="1.5"/>
+        <text x="770" y="48" font-size="13" font-weight="700" style="fill: var(--spoke)">WORKLOAD ACCOUNTS (dev, prod)</text>
+        <g font-size="13.5">
+          <rect x="770" y="66" width="238" height="56" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="784" y="90" font-weight="600">EventBridge forwarder</text>
+          <text x="784" y="108" class="muted" font-size="12.5">running, tag change, drift</text>
+          <rect x="770" y="134" width="238" height="56" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="784" y="158" font-weight="600">Patchgate-Execution role</text>
+          <text x="784" y="176" class="muted" font-size="12.5">trusts only the hub roles</text>
+          <rect x="770" y="202" width="238" height="56" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
+          <text x="784" y="226" font-weight="600">SSM documents</text>
+          <text x="784" y="244" class="muted" font-size="12.5">bootstrap, drift (State Manager)</text>
+          <rect x="770" y="282" width="238" height="150" rx="11" style="fill: var(--surface); stroke: var(--spoke)" stroke-width="1.5"/>
+          <text x="784" y="308" font-weight="700">EC2 instance</text>
+          <text x="784" y="330" class="muted" font-size="12.5">in-VM executor (Python / PowerShell)</text>
+          <text x="784" y="352" class="muted" font-size="12.5">agents · apps · hardening</text>
+          <text x="784" y="374" class="muted" font-size="12.5">controls · Ansible · DSC</text>
+          <text x="784" y="396" class="muted" font-size="12.5">evidence: compliance.json</text>
+          <text x="784" y="418" class="muted" font-size="12.5">tags: Patchgate:*</text>
+        </g>
+
+        <!-- arrows: routed through the gaps between boxes -->
+        <g fill="none" style="stroke: var(--muted)" stroke-width="1.5" marker-end="url(#arrow)">
+          <path d="M770 94 H698"/>
+          <path d="M514 94 H490"/>
+          <path d="M604 122 V146"/>
+          <path d="M604 206 V226"/>
+          <path d="M396 140 V162"/>
+          <path d="M396 222 V246"/>
+          <path d="M486 194 H500 V308 H766"/>
+          <path d="M232 392 H302"/>
+          <path d="M889 258 V278"/>
+        </g>
+        <g font-size="12">
+          <text x="714" y="86" class="muted">events</text>
+          <text x="520" y="301" class="muted">assume role · SSM Run Command</text>
+          <text x="250" y="384" class="muted">config</text>
+        </g>
+      </svg>
+    </div>
+    <div class="legend">
+      <span><i style="background: var(--mgmt)"></i>Management (us-east-1)</span>
+      <span><i style="background: var(--hub)"></i>Hub control plane (us-east-2)</span>
+      <span><i style="background: var(--spoke)"></i>Spokes, deployed by StackSet</span>
+      <span>Single-account mode: hub and spoke in one account</span>
+    </div>
+  </div>
+</section>
+
+<section id="flows">
+  <div class="wrap">
+    <h2>How it flows</h2>
+    <p class="lead">Three flows cover the life of an instance. All of them are event-driven, retried and auditable: no <code>user_data</code>, no agents of our own.</p>
+
+    <div class="tabs" role="tablist" aria-label="Flows">
+      <button class="tab" role="tab" aria-selected="true" aria-controls="p-boot" id="t-boot">Bootstrap</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="p-drift" id="t-drift">Drift</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="p-roll" id="t-roll">Gated rollout</button>
+    </div>
+
+    <div class="panel" id="p-boot" role="tabpanel" aria-labelledby="t-boot">
+      <div class="flow">
+        <div class="step"><div><span class="where spoke">Spoke</span><h4>Instance launches, starts, or its tags change</h4><p>The spoke forwards the EC2 <code>running</code> event, or a change to <code>Patchgate:Managed / Profile / AppSets</code>, to the hub bus.</p></div></div>
+        <div class="step"><div><span class="where hub">Hub</span><h4>Resolver builds the plan</h4><p>Assumes <code>Patchgate-Execution</code>, reads the tags, places the instance in its ring and approver group, and composes the plan from DynamoDB. Invalid configuration is refused, never applied.</p></div></div>
+        <div class="step"><div><span class="where hub">Hub</span><h4>One run per instance</h4><p>A DynamoDB lock serialises runs (launch and tag events arrive together). A plan whose digest is already applied ends here.</p></div></div>
+        <div class="step"><div><span class="where vm">Instance</span><h4>Executor applies the plan</h4><p>SSM Run Command delivers the compressed plan. The executor installs agents (sha256 verified, fails closed), reconciles apps and runs the hardening engine, writing per-rule evidence.</p></div></div>
+        <div class="step"><div><span class="where hub">Hub</span><h4>Tagged and reported</h4><p><code>Patchgate:BootstrapStatus</code> and the plan digest are written back as tags; the result is emailed.</p></div></div>
+      </div>
+      <div class="aside">
+        <h4>Why this design</h4>
+        <ul>
+          <li>Event-driven instead of <code>user_data</code>: every run is visible, retried and auditable (ADR 0004).</li>
+          <li>The VM never reads the catalog or calls a cloud API to decide what to do: the plan is self-contained.</li>
+          <li>Starting an instance re-checks it; nothing runs when the digest matches.</li>
+          <li>Values that reach a shell are validated first; executors are idempotent.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="panel" id="p-drift" role="tabpanel" aria-labelledby="t-drift" hidden>
+      <div class="flow">
+        <div class="step"><div><span class="where spoke">Spoke</span><h4>State Manager runs the drift document</h4><p>Every 30 minutes on every managed instance; the executor skips the run unless the profile's interval (30m–24h) is due.</p></div></div>
+        <div class="step"><div><span class="where vm">Instance</span><h4>Re-checks agents, apps and hardening</h4><p>Each category is <code>enforce</code> (correct) or <code>audit</code> (report only). Outside the profile's maintenance window, everything only reports.</p></div></div>
+        <div class="step"><div><span class="where vm">Instance</span><h4>Never skips a window</h4><p>The first check inside each window corrects even if the interval has not elapsed, so a short window is not missed.</p></div></div>
+        <div class="step"><div><span class="where hub">Hub</span><h4>Findings are emailed</h4><p>An <code>io.patchgate</code> event reaches the hub with the mode, the trigger and the window state: <em>remediated</em>, <em>non-compliant</em> or <em>failed</em>.</p></div></div>
+        <div class="step"><div><span class="where you">You</span><h4>Or reconcile now</h4><p><code>patchgate-cli instance reconcile &lt;id&gt;</code> runs the check immediately, ignoring interval and window, and prints the result.</p></div></div>
+      </div>
+      <div class="aside">
+        <h4>Verified in the lab</h4>
+        <ul>
+          <li>Apps reinstalled while hardening was only reported (mixed modes).</li>
+          <li>Outside the window: 7-Zip removed and LLMNR re-enabled were reported, not touched.</li>
+          <li><code>reconcile</code> corrected both immediately.</li>
+          <li>6h interval: the first run inside the window corrected; the next was not due.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="panel" id="p-roll" role="tabpanel" aria-labelledby="t-roll" hidden>
+      <div class="flow">
+        <div class="step"><div><span class="where you">You</span><h4>Change a profile or app set</h4><p><code>patchgate-cli apply</code> validates it and pins the current revision: instances keep it until a rollout releases the new one. <span class="pill done">done</span></p></div></div>
+        <div class="step"><div><span class="where hub">Hub</span><h4>Plan by ring and approver group</h4><p>Affected instances are grouped by ring (from their account) and approver group (account default or an allowed <code>Patchgate:Approvers</code> tag). <span class="pill done">done</span></p></div></div>
+        <div class="step pending"><div><span class="where hub">Hub</span><h4>Ring 0 (dev)</h4><p>The new revision is released to dev, instances re-plan through the bootstrap workflow, health is checked, then a soak period. On failure: revert and stop. <span class="pill wip">next</span></p></div></div>
+        <div class="step pending"><div><span class="where you">Approvers</span><h4>Email approval per group</h4><p>Signed, single-use, expiring links open a confirmation page; only its button decides. Each group approves its own instances. <span class="pill wip">next</span></p></div></div>
+        <div class="step pending"><div><span class="where hub">Hub</span><h4>Ring 1 (prod)</h4><p>Approved groups get the revision; rejected groups stay on the previous one. When everyone took it, it becomes the revision for all. <span class="pill wip">next</span></p></div></div>
+      </div>
+      <div class="aside">
+        <h4>Design notes (ADR 0010)</h4>
+        <ul>
+          <li>Releases are content revisions (sha256), so re-seeded built-in documents are tracked too.</li>
+          <li>Unregistered accounts are treated as the most protected ring.</li>
+          <li>Rules for rings, groups, releases and quorum are pure, tested functions in the core.</li>
+          <li>OS patching (Phase 4c-2) reuses the same engine with snapshots and rollback.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="hardening">
+  <div class="wrap">
+    <h2>Hardening engines</h2>
+    <p class="lead">Profiles pick an engine. All of them produce the same per-CIS-rule evidence, and third-party content is pinned by sha256 and installed offline.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Engine</th><th>Platform</th><th>Content</th><th>Verified in the lab</th></tr></thead>
+        <tbody>
+          <tr><td><b>controls</b></td><td>Linux, Windows</td><td>17 Linux and 15 Windows native controls (check + idempotent remediation) at <code>baseline</code> or <code>cis-level1</code></td><td>Applied at bootstrap; manual drift corrected and emailed</td></tr>
+          <tr><td><b>ansible</b></td><td>Amazon Linux 2023</td><td>ansible-lockdown CIS L1 1.5.0; role, collections and ansible-core pinned by hash</td><td>Full CIS L1 in ~5.5 min; 198/198 compliant on re-run</td></tr>
+          <tr><td><b>dsc</b></td><td>Windows Server 2022</td><td>CISDSC 4.0.1 + AuditPolicyDsc + SecurityPolicyDsc, safe .nupkg extraction</td><td>Full CIS L1 in ~2.5 min; 293/293 compliant on re-run</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="status">
+  <div class="wrap">
+    <h2>Where it stands</h2>
+    <p class="lead">Each phase ends with working code, docs, an ADR and a test on real AWS accounts. The lab is ephemeral: created for a session and destroyed after (about US$0.25–0.50 per session).</p>
+    <div class="timeline">
+      <div class="phase"><span class="num">Phase 0</span><div><h3>Foundation</h3><p>Organization and OUs, budgets with an SCP kill switch, CloudTrail, ephemeral lab with TTL reaper, CI (lint, types, tests, IaC scan).</p></div><span class="pill done">done</span></div>
+      <div class="phase"><span class="num">Phase 1</span><div><h3>Multi-account onboarding</h3><p>Hub and spokes; spokes auto-deploy when an account joins the Workloads OU and are removed when it leaves. Single-account mode.</p></div><span class="pill done">done</span></div>
+      <div class="phase"><span class="num">Phase 2</span><div><h3>Bootstrap and agent catalog</h3><p>JSON Schemas, checksum-verified installers for Linux and Windows, Chocolatey, CloudWatch Agent, ClamAV, Defender.</p></div><span class="pill done">done</span></div>
+      <div class="phase"><span class="num">Phase 3</span><div><h3>Hardening and drift</h3><p>Native controls, full CIS L1 via Ansible (Linux) and DSC (Windows), drift correction with email.</p></div><span class="pill done">done</span></div>
+      <div class="phase"><span class="num">Phase 4a</span><div><h3>App lifecycle and configuration store</h3><p>App sets, prune, configuration in DynamoDB with history and rollback, <code>patchgate-cli</code>, re-plan on tag change, per-instance lock.</p></div><span class="pill done">done</span></div>
+      <div class="phase"><span class="num">Phase 4b</span><div><h3>Drift control</h3><p>Mode per category, maintenance window, on-demand reconcile.</p></div><span class="pill done">done</span></div>
+      <div class="phase current"><span class="num">Phase 4c-1</span><div><h3>Approval engine</h3><p>Done: rollout rules, approval tokens, accounts and per-ring releases. Next: rollout workflow, approval API and email (SES).</p></div><span class="pill wip">in progress</span></div>
+      <div class="phase"><span class="num">Phase 4c-2</span><div><h3>OS patching</h3><p>Patch Manager driven by the engine, pre-patch snapshot, health checks, automatic rollback.</p></div><span class="pill plan">planned</span></div>
+      <div class="phase"><span class="num">Phase 5–6</span><div><h3>Golden images, compliance and emergency patching</h3><p>Image Builder with an Inspector gate; compliance dashboard, MTTP and CVE-driven emergency patching.</p></div><span class="pill plan">planned</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="lessons">
+  <div class="wrap">
+    <h2>What only the real lab revealed</h2>
+    <p class="lead">Unit tests passed for all of these. Running on real instances, in real accounts, is what found them.</p>
+    <div class="grid g3">
+      <div class="card lesson"><h3>Duplicate launch events</h3><p>Creating a tagged instance emits both <code>running</code> and a tag-change event. Two installers ran at once and Windows failed with MSI 1618.</p><p class="fix">A per-instance DynamoDB lock serialises runs, plus a retry while Windows Installer is busy.</p></div>
+      <div class="card lesson"><h3>A byte order mark</h3><p>The CloudWatch agent config written by PowerShell carried a BOM, and the agent refused it on the first Windows run.</p><p class="fix">Configs are written as UTF-8 without BOM; tests reject a BOM.</p></div>
+      <div class="card lesson"><h3>sshd reads the first value</h3><p>A drop-in that sorts before Patchgate's (<code>00-oops.conf</code>) silently won over the remediation.</p><p class="fix">Remediation neutralises the directive in every other file first.</p></div>
+      <div class="card lesson"><h3>CIS vs. the cloud</h3><p>A CIS rule disables the only local administrator on EC2, which would lock out access; the full MOF also exceeded WinRM's envelope size.</p><p class="fix">Documented exclusions for EC2 and a larger local WinRM envelope before DSC runs.</p></div>
+      <div class="card lesson"><h3>Evidence that never came</h3><p>Ansible applied the benchmark (rc=0) but no rule was recorded: the JSON callback prefixes task names with the role name.</p><p class="fix">The parser handles role-prefixed names; evidence is checked in the lab, not assumed.</p></div>
+      <div class="card lesson"><h3>Python 3.13 vs. 3.12</h3><p>The Lambda layer lock was generated locally on 3.13 and missed a dependency the 3.12 runtime needed.</p><p class="fix">The lock is generated and tested inside the official Lambda image.</p></div>
+      <div class="card lesson"><h3>Empty command output</h3><p>SSM returns no output for a multi-step document unless the step is named, so <code>reconcile</code> printed nothing.</p><p class="fix">The CLI polls the command, then reads the output of the right step.</p></div>
+      <div class="card lesson"><h3>A 51 KB limit</h3><p>Embedding the executors made the spoke CloudFormation template larger than the inline limit.</p><p class="fix">The template is delivered from a versioned S3 artifacts bucket.</p></div>
+      <div class="card lesson"><h3>rate() is not cron</h3><p>State Manager rejected a <code>rate()</code> schedule with apply-only-at-interval, and the StackSet update rolled back on its own.</p><p class="fix">A cron schedule; the executor decides when a check is due.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="principles">
+  <div class="wrap">
+    <h2>Principles</h2>
+    <div class="grid g3">
+      <div class="card"><h3>Cloud-agnostic core</h3><p><code>core/</code> never imports a cloud SDK (enforced in CI). Providers implement a contract; AWS is the provider today.</p></div>
+      <div class="card"><h3>Verifiable supply chain</h3><p>Every download carries a sha256 and fails closed. Ansible collections, DSC modules and Python wheels are hash-pinned.</p></div>
+      <div class="card"><h3>Least privilege</h3><p>The hub may only assume the execution role inside the organization; Run Command only targets managed instances; Patchgate only writes <code>Patchgate:*</code> tags.</p></div>
+      <div class="card"><h3>Configuration as data</h3><p>Catalog documents are validated against JSON Schemas, versioned with history and rollback, and refused when invalid.</p></div>
+      <div class="card"><h3>Idempotent in the VM</h3><p>Running a plan twice gives the same result. Pruning only removes what Patchgate installed.</p></div>
+      <div class="card"><h3>Decisions on record</h3><p>Ten ADRs explain the choices and the options rejected, from hub-and-spoke to the approval engine.</p></div>
+    </div>
+    <h3 style="margin-top: 28px">Built with</h3>
+    <div class="chips" style="margin-top: 10px">
+      <span class="chip">Python 3.12</span><span class="chip">PowerShell 5.1+</span><span class="chip">Terraform</span><span class="chip">CloudFormation StackSets</span><span class="chip">Step Functions</span><span class="chip">Lambda</span><span class="chip">EventBridge</span><span class="chip">Systems Manager</span><span class="chip">DynamoDB</span><span class="chip">SNS</span><span class="chip">Ansible</span><span class="chip">PowerShell DSC</span><span class="chip">Chocolatey</span><span class="chip">pytest + moto</span><span class="chip">ruff · mypy · tflint · checkov</span><span class="chip">GitHub Actions</span>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Patchgate · Apache License 2.0</span>
+    <span><a href="https://github.com/kevinfinalboss/PatchGate">Repository</a> · <a href="https://github.com/kevinfinalboss/PatchGate/blob/main/docs/architecture.md">Architecture</a> · <a href="https://github.com/kevinfinalboss/PatchGate/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/kevinfinalboss/PatchGate/blob/main/docs/security/threat-model.md">Threat model</a></span>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var key = "patchgate-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" ||
+      (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+
+  var tabs = document.querySelectorAll('[role="tab"]');
+  tabs.forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      tabs.forEach(function (t) {
+        var on = t === tab;
+        t.setAttribute("aria-selected", on ? "true" : "false");
+        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
