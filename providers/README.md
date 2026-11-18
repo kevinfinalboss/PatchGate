@@ -5,7 +5,6 @@ A provider connects Patchgate's cloud-agnostic `core/` to a specific cloud. Each
 | Provider | Status |
 |---|---|
 | [`aws/`](aws/) | In development |
-| `azure/` | Planned — Phase 7 (via AWS SSM hybrid nodes) and Phase 8 (native) |
 
 ## Responsibilities
 
@@ -23,17 +22,17 @@ A provider connects Patchgate's cloud-agnostic `core/` to a specific cloud. Each
 
 The contract is intentionally small. It grows only when a second provider proves an operation is common (see [ADR 0001](../docs/adr/0001-core-and-providers.md)).
 
-| Operation | Purpose | AWS | Azure (planned) |
-|---|---|---|---|
-| `describe_instance(ref)` → `Instance` | OS, tags, profile, readiness | EC2 `DescribeInstances` + SSM `DescribeInstanceInformation` | Resource Graph + Arc / VM agent status |
-| `run(ref, script, params)` → `RunId` | Execute a core script on the VM | SSM Run Command | VM Run Command |
-| `get_run_status(run_id)` → `RunStatus` | Poll execution result | `GetCommandInvocation` | Run Command instance view |
-| `scan_patches(ref, policy)` → `PatchReport` | List missing patches | SSM Patch Manager (`Scan`) | Azure Update Manager assessment |
-| `install_patches(ref, policy)` → `RunId` | Apply approved patches | SSM Patch Manager (`Install`) | Azure Update Manager deployment |
-| `snapshot(ref)` → `SnapshotId` | Pre-change backup | EBS snapshot / AWS Backup | Managed disk snapshot |
-| `restore(ref, snapshot_id)` | Rollback | Root volume replacement | Disk swap |
-| `set_state(ref, key, value)` | Persist status on the resource | Tags `Patchgate:*` | Tags `Patchgate:*` |
-| `normalize_event(raw)` → `CloudEvent` | Translate native events | EventBridge → CloudEvent | Event Grid → CloudEvent |
+| Operation | Purpose | AWS |
+|---|---|---|
+| `describe_instance(ref)` → `Instance` | OS, tags, profile, readiness | EC2 `DescribeInstances` + SSM `DescribeInstanceInformation` |
+| `run(ref, script, params)` → `RunId` | Execute a core script on the VM | SSM Run Command |
+| `get_run_status(run_id)` → `RunStatus` | Poll execution result | `GetCommandInvocation` |
+| `scan_patches(ref, policy)` → `PatchReport` | List missing patches | SSM Patch Manager (`Scan`) |
+| `install_patches(ref, policy)` → `RunId` | Apply approved patches | SSM Patch Manager (`Install`) |
+| `snapshot(ref)` → `SnapshotId` | Pre-change backup | EBS snapshot / AWS Backup |
+| `restore(ref, snapshot_id)` | Rollback | Root volume replacement |
+| `set_state(ref, key, value)` | Persist status on the resource | Tags `Patchgate:*` |
+| `normalize_event(raw)` → `CloudEvent` | Translate native events | EventBridge → CloudEvent |
 
 `ref` is a provider-neutral `InstanceRef` (`provider`, `account`, `region`, `id`).
 

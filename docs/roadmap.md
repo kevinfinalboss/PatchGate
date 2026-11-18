@@ -99,16 +99,6 @@ waves with approval. Phase 4 builds that once and reuses it for everything.
 - [ ] Monthly evidence report
 - [ ] Inspector critical CVE → emergency patch workflow
 
-## Phase 7 — Azure via hybrid nodes
-
-- [ ] Register Azure VMs as SSM hybrid nodes
-- [ ] Run bootstrap, hardening and patching from the AWS hub unchanged
-
-## Phase 8 — Native Azure provider
-
-- [ ] `providers/azure/` implementing the provider contract
-- [ ] Update Manager, Lighthouse, Event Grid, Durable Functions
-
 ## Cost notes
 
 The lab is **ephemeral**: everything is created at the start of a test session and destroyed at the end (sessions of at most 2 hours). Only the Terraform state bucket, CloudTrail and budgets persist.

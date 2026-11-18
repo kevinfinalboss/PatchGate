@@ -4,7 +4,7 @@
 
 **Secure baselines. Gated patching. Any cloud.**
 
-Cloud-agnostic platform to harden, bootstrap and patch Linux & Windows fleets across accounts — with approval gates and automatic rollback. AWS first, Azure next.
+Cloud-agnostic platform to harden, bootstrap and patch Linux & Windows fleets across accounts — with approval gates and automatic rollback. Built on AWS.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Status](https://img.shields.io/badge/status-phase%204%20%E2%80%94%20next-yellow)
@@ -22,7 +22,7 @@ Patchgate keeps your server fleet secure and up to date — from the moment a ma
 
 New instances are automatically bootstrapped with the agents and software you declare in a simple YAML catalog, then hardened against CIS benchmarks with continuous drift correction. Patches roll out in rings (dev → prod) with email approval gates, pre-patch snapshots and automatic rollback when health checks fail. Everything works across multiple accounts from a central hub, and produces compliance evidence ready for audits.
 
-Patchgate is built with a **cloud-agnostic core** and **pluggable providers**. AWS is the first provider; Azure is on the roadmap.
+Patchgate is built with a **cloud-agnostic core** and **pluggable providers**: the catalog, in-VM installers and hardening engines know nothing about the cloud. AWS is the provider today.
 
 ## Features
 
@@ -37,7 +37,7 @@ Patchgate is built with a **cloud-agnostic core** and **pluggable providers**. A
 | 🚨 | **CVE-driven emergency patching** — a critical finding triggers an accelerated flow | Planned (Phase 6) |
 | 📊 | **Compliance and evidence** — dashboard, MTTP and audit-ready reports | Planned (Phase 6) |
 | 🏢 | **Multi-account** — central hub; new accounts are onboarded automatically. Single-account mode supported | ✅ Done |
-| ☁️ | **Multi-cloud by design** — AWS today, Azure next | Planned (Phases 7–8) |
+| ☁️ | **Cloud-agnostic core** — catalog, installers and hardening engines independent of the cloud; AWS provider | ✅ Done |
 
 ## How it works
 

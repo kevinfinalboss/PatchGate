@@ -42,7 +42,7 @@ Patchgate can run commands as root/SYSTEM on every managed server in every conne
 
 ## Review
 
-Revisit this document whenever a phase adds a new trust boundary (for example the approval API in Phase 4 or Azure in Phase 7).
+Revisit this document whenever a phase adds a new trust boundary (for example the approval API in Phase 4c or a new provider).
 
 ## Accepted risks (lab scale)
 

@@ -36,7 +36,7 @@ make check
 | Hardening rule | `core/hardening/` |
 | Ring/approval/compliance logic | `core/lib/` |
 | Anything that calls a cloud API | `providers/<cloud>/` |
-| New cloud provider | `providers/<cloud>/` + ADR (see [providers/README.md](providers/README.md)) |
+| New cloud provider (not planned) | `providers/<cloud>/` + ADR (see [providers/README.md](providers/README.md)) |
 
 Golden rule: **`core/` never knows which cloud it runs on.**
 
@@ -44,7 +44,7 @@ Golden rule: **`core/` never knows which cloud it runs on.**
 
 1. Fork and create a branch from `main` (`feat/short-description`, `fix/...`, `docs/...`).
 2. Use [Conventional Commits](https://www.conventionalcommits.org/): `feat(core): add msi install method`.
-   Scopes: `core`, `aws`, `azure`, `catalog`, `docs`, `ci`.
+   Scopes: `core`, `aws`, `catalog`, `docs`, `ci`.
 3. Add or update tests and docs.
 4. Add an entry to [CHANGELOG.md](CHANGELOG.md) under `Unreleased` for user-visible changes.
 5. Fill in the PR template and make sure CI is green.

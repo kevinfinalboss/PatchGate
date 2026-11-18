@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: design for Phases 0–6 (AWS). Azure is described in [Multi-cloud](#multi-cloud).
+> Status: AWS provider; Phases 0–4a implemented and verified in a lab (see the [roadmap](roadmap.md)).
 
 ## Goals
 
@@ -147,23 +147,12 @@ See the [threat model](security/threat-model.md).
 | `Patchgate:BootstrapStatus` | Patchgate | `Success` / `Failed` |
 | `Patchgate:LastPatch` | Patchgate | Timestamp and result of the last patch |
 
-## Multi-cloud
+## Other providers
 
-The core (catalog, scripts, hardening, rules) is shared. Each cloud has its own provider implementing the [provider contract](../providers/README.md) with native services:
-
-| Concern | AWS | Azure |
-|---|---|---|
-| Accounts | Organizations + OUs | Management groups + subscriptions |
-| Cross-account access | AssumeRole | Lighthouse / managed identity |
-| Run commands | SSM Run Command | VM Run Command / Arc |
-| Patching | SSM Patch Manager | Azure Update Manager |
-| Drift | State Manager | Azure Policy machine configuration |
-| Orchestration | Step Functions | Durable Functions / Logic Apps |
-| Events | EventBridge | Event Grid |
-| Images | EC2 Image Builder | Azure Image Builder + Compute Gallery |
-| Vulnerabilities | Inspector | Defender for Cloud |
-
-Phase 7 manages Azure VMs as **SSM hybrid nodes** from the AWS hub to validate that the core is truly cloud-agnostic. Phase 8 adds a native Azure provider.
+The core (catalog, in-VM installers, hardening engines, plan composition) is cloud-agnostic. Another
+cloud would be a new `providers/<cloud>/` implementing the [provider contract](../providers/README.md)
+with that cloud's native services, without changes to `core/` ([ADR 0001](adr/0001-core-and-providers.md)).
+No other provider is planned at the moment.
 
 ## Cost guardrails
 

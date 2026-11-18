@@ -61,7 +61,7 @@ Before editing files under these folders, read their own AGENTS.md (closest file
 
 ## Commits and pull requests
 
-- [Conventional Commits](https://www.conventionalcommits.org/): `feat(core): ...`, `fix(aws): ...`, `docs(adr): ...`. Scopes: `core`, `aws`, `azure`, `catalog`, `docs`, `ci`.
+- [Conventional Commits](https://www.conventionalcommits.org/): `feat(core): ...`, `fix(aws): ...`, `docs(adr): ...`. Scopes: `core`, `aws`, `catalog`, `docs`, `ci`.
 - One logical change per PR. Run `make check` before opening it.
 - Architectural decisions go in a new ADR (`docs/adr/NNNN-title.md`, from the template).
 - Update [CHANGELOG.md](CHANGELOG.md) under `Unreleased` for user-visible changes.
