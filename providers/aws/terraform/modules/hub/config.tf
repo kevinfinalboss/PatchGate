@@ -173,3 +173,28 @@ resource "aws_lambda_event_source_mapping" "audit" {
   bisect_batch_on_function_error     = true
   maximum_batching_window_in_seconds = 5
 }
+
+# One Patchgate run per instance at a time (launch and tag-change events arrive together).
+resource "aws_dynamodb_table" "locks" {
+  name         = "patchgate-locks"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "lockId"
+
+  attribute {
+    name = "lockId"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+}

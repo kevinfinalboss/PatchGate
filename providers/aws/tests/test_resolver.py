@@ -51,6 +51,12 @@ def seed_config_table() -> None:
             {"AttributeName": "name", "KeyType": "RANGE"},
         ],
     )
+    boto3.client("dynamodb", region_name=REGION).create_table(
+        TableName="patchgate-locks",
+        BillingMode="PAY_PER_REQUEST",
+        AttributeDefinitions=[{"AttributeName": "lockId", "AttributeType": "S"}],
+        KeySchema=[{"AttributeName": "lockId", "KeyType": "HASH"}],
+    )
     store = ConfigStore("patchgate-config")
     for doc in Catalog.load(CATALOG).documents():
         store.put(doc, "test-seed", managed_by=BUILT_IN)
@@ -232,3 +238,30 @@ def test_seed_file_is_up_to_date_with_catalog() -> None:
         for d in Catalog.load(CATALOG).documents()
     ]
     assert seed == expected, "seed.json is stale: run `make seed`"
+
+
+def test_concurrent_runs_on_one_instance_are_serialised(resolver: ModuleType) -> None:
+    """Launch and tag-change events arrive together: only one run may install at a time."""
+    instance = launch({"Patchgate:Managed": "true"})
+    first = resolver.handler(event(instance, executionName="launch-run"))
+    second = resolver.handler(event(instance, executionName="tag-run"))
+    again = resolver.handler(event(instance, executionName="launch-run"))
+    assert first["lockBusy"] is False
+    assert second["lockBusy"] is True
+    assert again["lockBusy"] is False  # re-entrant for the owner (SSM wait loop)
+
+
+def test_stale_locks_expire(resolver: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    instance = launch({"Patchgate:Managed": "true"})
+    resolver.handler(event(instance, executionName="crashed-run"))
+    later = resolver.time.time() + resolver.LOCK_TTL_SECONDS + 1
+    monkeypatch.setattr(resolver.time, "time", lambda: later)
+    assert resolver.handler(event(instance, executionName="new-run"))["lockBusy"] is False
+
+
+def test_no_lock_when_nothing_to_do(resolver: ModuleType) -> None:
+    instance = launch({"Name": "unmanaged"})
+    result = resolver.handler(event(instance, executionName="x"))
+    assert result["lockBusy"] is False
+    items = boto3.client("dynamodb", region_name=REGION).scan(TableName="patchgate-locks")
+    assert items["Count"] == 0

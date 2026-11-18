@@ -203,6 +203,11 @@ data "aws_iam_policy_document" "resolver" {
     actions   = ["dynamodb:GetItem", "dynamodb:Query"]
     resources = [aws_dynamodb_table.config.arn]
   }
+  statement {
+    sid       = "AcquireInstanceLock"
+    actions   = ["dynamodb:PutItem"]
+    resources = [aws_dynamodb_table.locks.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "resolver" {
@@ -232,6 +237,7 @@ resource "aws_lambda_function" "resolver" {
     variables = {
       EXECUTION_ROLE_NAME    = var.execution_role_name
       PATCHGATE_CONFIG_TABLE = aws_dynamodb_table.config.name
+      PATCHGATE_LOCKS_TABLE  = aws_dynamodb_table.locks.name
     }
   }
 
@@ -278,6 +284,11 @@ data "aws_iam_policy_document" "orchestrator" {
     resources = [aws_sns_topic.notifications.arn]
   }
   statement {
+    sid       = "ReleaseInstanceLock"
+    actions   = ["dynamodb:DeleteItem"]
+    resources = [aws_dynamodb_table.locks.arn]
+  }
+  statement {
     sid       = "XRayTracing"
     actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords", "xray:GetSamplingRules", "xray:GetSamplingTargets"]
     resources = ["*"]
@@ -311,6 +322,7 @@ resource "aws_sfn_state_machine" "bootstrap" {
     resolver_arn      = aws_lambda_function.resolver.arn
     topic_arn         = aws_sns_topic.notifications.arn
     ssm_wait_attempts = var.ssm_wait_attempts
+    locks_table       = aws_dynamodb_table.locks.name
   })
 
   tracing_configuration {

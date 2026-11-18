@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any
 
 import boto3
@@ -29,6 +30,8 @@ LOG.setLevel(logging.INFO)
 EXECUTION_ROLE_NAME = os.environ.get("EXECUTION_ROLE_NAME", "Patchgate-Execution")
 PARTITION = os.environ.get("AWS_PARTITION", "aws")
 CONFIG_TABLE = os.environ.get("PATCHGATE_CONFIG_TABLE", "patchgate-config")
+LOCKS_TABLE = os.environ.get("PATCHGATE_LOCKS_TABLE", "patchgate-locks")
+LOCK_TTL_SECONDS = 2 * 3600  # a crashed execution never blocks an instance for longer
 
 TAG_MANAGED = "Patchgate:Managed"
 TAG_PROFILE = "Patchgate:Profile"
@@ -116,6 +119,29 @@ def ssm_ping_status(session: boto3.Session, instance_id: str) -> str:
     return str(info[0].get("PingStatus", "Unknown")) if info else "NotRegistered"
 
 
+def acquire_lock(account_id: str, instance_id: str, owner: str) -> bool:
+    """One run per instance at a time (launch and tag events arrive together).
+
+    Re-entrant for the same execution; stale locks expire after LOCK_TTL_SECONDS.
+    """
+    now = int(time.time())
+    try:
+        boto3.client("dynamodb").put_item(
+            TableName=LOCKS_TABLE,
+            Item={
+                "lockId": {"S": f"{account_id}#{instance_id}"},
+                "owner": {"S": owner},
+                "expiresAt": {"N": str(now + LOCK_TTL_SECONDS)},
+            },
+            ConditionExpression="attribute_not_exists(lockId) OR #o = :me OR expiresAt < :now",
+            ExpressionAttributeNames={"#o": "owner"},
+            ExpressionAttributeValues={":me": {"S": owner}, ":now": {"N": str(now)}},
+        )
+        return True
+    except boto3.client("dynamodb").exceptions.ConditionalCheckFailedException:
+        return False
+
+
 def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
     account_id = _require(_ACCOUNT, event.get("accountId"), "accountId")
     instance_id = _require(_INSTANCE, event.get("instanceId"), "instanceId")
@@ -136,6 +162,8 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         "digest": "",
         "documentName": "",
         "documentParameters": {},
+        "lockId": f"{account_id}#{instance_id}",
+        "lockBusy": False,
     }
 
     session = spoke_session(account_id, region)
@@ -163,6 +191,9 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         documentName=DOCUMENTS[platform],
         documentParameters={"Plan": [encoded]},
     )
+    if result["ssmOnline"] and not result["alreadyBootstrapped"]:
+        owner = str(event.get("executionName") or "unknown")
+        result["lockBusy"] = not acquire_lock(account_id, instance_id, owner)
     LOG.info(
         json.dumps({k: v for k, v in result.items() if k != "documentParameters"}, default=str)
     )

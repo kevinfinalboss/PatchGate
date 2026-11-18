@@ -13,7 +13,8 @@
         "accountId.$": "$.account",
         "region.$": "$.region",
         "instanceId.$": "States.ArrayGetItem(States.StringSplit($.resources[0], '/'), 1)",
-        "retry": { "count": 0 }
+        "retry": { "count": 0 },
+        "lockRetry": { "count": 0 }
       },
       "Next": "Resolve"
     },
@@ -23,7 +24,8 @@
         "accountId.$": "$.account",
         "region.$": "$.region",
         "instanceId.$": "$.detail.instance-id",
-        "retry": { "count": 0 }
+        "retry": { "count": 0 },
+        "lockRetry": { "count": 0 }
       },
       "Next": "Resolve"
     },
@@ -33,7 +35,8 @@
       "Parameters": {
         "accountId.$": "$.accountId",
         "region.$": "$.region",
-        "instanceId.$": "$.instanceId"
+        "instanceId.$": "$.instanceId",
+        "executionName.$": "$$.Execution.Name"
       },
       "ResultPath": "$.ctx",
       "Retry": [
@@ -60,10 +63,31 @@
     "IsSsmOnline": {
       "Type": "Choice",
       "Choices": [
-        { "Variable": "$.ctx.ssmOnline", "BooleanEquals": true, "Next": "RunPlan" },
+        { "Variable": "$.ctx.ssmOnline", "BooleanEquals": true, "Next": "IsLockFree" },
         { "Variable": "$.retry.count", "NumericGreaterThanEquals": ${ssm_wait_attempts}, "Next": "SsmTimeout" }
       ],
       "Default": "WaitForSsm"
+    },
+    "IsLockFree": {
+      "Type": "Choice",
+      "Choices": [
+        { "Variable": "$.ctx.lockBusy", "BooleanEquals": false, "Next": "RunPlan" },
+        { "Variable": "$.lockRetry.count", "NumericGreaterThanEquals": 45, "Next": "LockTimeout" }
+      ],
+      "Default": "WaitForLock"
+    },
+    "WaitForLock": { "Type": "Wait", "Seconds": 60, "Next": "CountLockRetry" },
+    "CountLockRetry": {
+      "Type": "Pass",
+      "Parameters": { "count.$": "States.MathAdd($.lockRetry.count, 1)" },
+      "ResultPath": "$.lockRetry",
+      "Next": "Resolve"
+    },
+    "LockTimeout": {
+      "Type": "Pass",
+      "Result": { "Error": "LockTimeout", "Cause": "Another Patchgate run kept this instance busy for too long" },
+      "ResultPath": "$.error",
+      "Next": "NotifyFailure"
     },
     "WaitForSsm": { "Type": "Wait", "Seconds": 30, "Next": "CountRetry" },
     "CountRetry": {
@@ -152,8 +176,23 @@
         "Message.$": "States.Format('Instance {} in account {} was bootstrapped with profile {} ({}).', $.instanceId, $.accountId, $.ctx.profile, $.ctx.digest)"
       },
       "ResultPath": null,
-      "End": true
+      "Next": "ReleaseLock"
     },
+    "ReleaseLock": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:deleteItem",
+      "Parameters": {
+        "TableName": "${locks_table}",
+        "Key": { "lockId": { "S.$": "States.Format('{}#{}', $.accountId, $.instanceId)" } },
+        "ConditionExpression": "#o = :me",
+        "ExpressionAttributeNames": { "#o": "owner" },
+        "ExpressionAttributeValues": { ":me": { "S.$": "$$.Execution.Name" } }
+      },
+      "ResultPath": null,
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": null, "Next": "Done" }],
+      "Next": "Done"
+    },
+    "Done": { "Type": "Succeed" },
     "TagFailed": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:ec2:createTags",
@@ -178,6 +217,20 @@
         "Message.$": "States.Format('Bootstrap failed for instance {} in account {}. Execution: {}. Error: {}', $.instanceId, $.accountId, $$.Execution.Name, States.JsonToString($.error))"
       },
       "ResultPath": null,
+      "Next": "ReleaseLockAfterFailure"
+    },
+    "ReleaseLockAfterFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:deleteItem",
+      "Parameters": {
+        "TableName": "${locks_table}",
+        "Key": { "lockId": { "S.$": "States.Format('{}#{}', $.accountId, $.instanceId)" } },
+        "ConditionExpression": "#o = :me",
+        "ExpressionAttributeNames": { "#o": "owner" },
+        "ExpressionAttributeValues": { ":me": { "S.$": "$$.Execution.Name" } }
+      },
+      "ResultPath": null,
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": null, "Next": "Failed" }],
       "Next": "Failed"
     },
     "Failed": { "Type": "Fail", "Error": "BootstrapFailed", "Cause": "See the NotifyFailure state input for details" }

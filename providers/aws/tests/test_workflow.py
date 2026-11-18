@@ -13,6 +13,7 @@ SAMPLE_VARS = {
     "resolver_arn": "arn:aws:lambda:us-east-2:111111111111:function:patchgate-resolver",
     "topic_arn": "arn:aws:sns:us-east-2:111111111111:patchgate-notifications",
     "ssm_wait_attempts": "20",
+    "locks_table": "patchgate-locks",
 }
 
 
@@ -42,6 +43,10 @@ def test_every_transition_targets_an_existing_state(path: Path) -> None:
 
 @pytest.mark.parametrize("path", sorted(WORKFLOWS.glob("*.asl.json")), ids=lambda p: p.name)
 def test_spoke_api_calls_use_cross_account_credentials(path: Path) -> None:
+    spoke_services = ("aws-sdk:ec2:", "aws-sdk:ssm:")  # act on instances in workload accounts
     for name, state in render(path)["States"].items():
-        if str(state.get("Resource", "")).startswith("arn:aws:states:::aws-sdk:"):
+        resource = str(state.get("Resource", ""))
+        if any(service in resource for service in spoke_services):
             assert "Credentials" in state, f"{name} would run in the hub account"
+        elif "aws-sdk:dynamodb:" in resource:
+            assert "Credentials" not in state, f"{name}: hub tables must use the hub's role"
