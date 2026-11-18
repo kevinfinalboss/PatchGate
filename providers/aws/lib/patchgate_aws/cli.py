@@ -49,6 +49,8 @@ TAG_PROFILE = "Patchgate:Profile"
 TAG_APPSETS = "Patchgate:AppSets"
 TAG_MANAGED = "Patchgate:Managed"
 DRIFT_DOCUMENT = "Patchgate-Drift"
+# Steps of the drift document; output must be read per step (it is empty otherwise).
+DRIFT_STEPS = {"linux": "driftLinux", "windows": "driftWindows"}
 COMMAND_DONE = {"Success", "Failed", "Cancelled", "TimedOut", "Undeliverable", "Terminated"}
 POLL_SECONDS = 5.0
 OUTPUT_TAIL_LINES = 20
@@ -293,8 +295,9 @@ class Cli:
         if self.args.no_wait:
             return 0
         invocation = self.wait_for_command(ssm, command["CommandId"], instance_id)
-        output = invocation.get("StandardOutputContent", "").rstrip().splitlines()
-        for line in output[-OUTPUT_TAIL_LINES:]:
+        platform = "windows" if instance.get("Platform", "").lower() == "windows" else "linux"
+        output = step_output(ssm, command["CommandId"], instance_id, DRIFT_STEPS[platform])
+        for line in output.rstrip().splitlines()[-OUTPUT_TAIL_LINES:]:
             self.print(f"  {line}")
         status = invocation["Status"]
         self.print(f"reconcile {status.lower()} on {instance_id}")
@@ -318,6 +321,17 @@ class Cli:
                     "check it in the SSM console"
                 )
             time.sleep(POLL_SECONDS)
+
+
+def step_output(ssm: Any, command_id: str, instance_id: str, step: str) -> str:
+    """Output of one document step (the invocation-level output is empty with several steps)."""
+    try:
+        invocation = ssm.get_command_invocation(
+            CommandId=command_id, InstanceId=instance_id, PluginName=step
+        )
+    except ClientError:
+        return ""
+    return str(invocation.get("StandardOutputContent", ""))
 
 
 def parser() -> argparse.ArgumentParser:

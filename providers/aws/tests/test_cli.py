@@ -232,7 +232,9 @@ def test_reconcile_waits_until_the_command_finishes(
         def __init__(self) -> None:
             self.calls = 0
 
-        def get_command_invocation(self, **_: str) -> dict[str, str]:
+        def get_command_invocation(self, **kwargs: str) -> dict[str, str]:
+            if "PluginName" in kwargs:  # per-step output, read once the command is done
+                return {"Status": "Failed", "StandardOutputContent": f"{kwargs['PluginName']} out"}
             self.calls += 1
             if self.calls == 1:
                 raise ClientError(
@@ -248,3 +250,4 @@ def test_reconcile_waits_until_the_command_finishes(
     fake = FakeSsm()
     invocation = cli.Cli(args).wait_for_command(fake, "cmd-1", "i-1")
     assert invocation["Status"] == "Failed" and fake.calls == 3
+    assert cli.step_output(fake, "cmd-1", "i-1", "driftWindows") == "driftWindows out"

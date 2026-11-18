@@ -4,7 +4,7 @@ Instructions for AI coding agents working on Patchgate. Humans: see [README.md](
 
 ## Project in one paragraph
 
-Patchgate hardens, bootstraps and patches Linux/Windows fleets across cloud accounts. The code is split into a **cloud-agnostic `core/`** and **`providers/<cloud>/`** that implement the [provider contract](providers/README.md). AWS is the only provider today. Current status: Phases 0–3 and **4a** are done and verified in the lab; **Phase 4b** is next (see [docs/roadmap.md](docs/roadmap.md)). Do not invent code that a phase has not asked for.
+Patchgate hardens, bootstraps and patches Linux/Windows fleets across cloud accounts. The code is split into a **cloud-agnostic `core/`** and **`providers/<cloud>/`** that implement the [provider contract](providers/README.md). AWS is the only provider today. Current status: Phases 0–3, **4a** and **4b** are done and verified in the lab; **Phase 4c** is next (see [docs/roadmap.md](docs/roadmap.md)). Do not invent code that a phase has not asked for.
 
 ## Nested instructions
 

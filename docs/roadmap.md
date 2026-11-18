@@ -75,11 +75,11 @@ waves with approval. Phase 4 builds that once and reuses it for everything.
 - [x] `patchgate-cli` (Instance Scheduler style): validated writes, copy/delete/history/rollback, instance app sets
 - [x] Verified in the lab: app sets at launch (.NET 8 on Windows, git/jq on Linux); `patchgate-cli` tag changes applied without restart (Node.js added; .NET pruned while profile apps stayed; on Linux git pruned, pre-installed jq untouched); app removed by hand reinstalled by drift with email; disallowed app set refused with email; duplicate launch events serialised by the per-instance lock (one install)
 
-### 4b — Drift control
+### 4b — Drift control ✅
 - [x] Drift mode per category (`agents`, `apps`, `hardening`); the profile's `mode` stays the default
 - [x] Maintenance window per profile: outside it drift only reports; inside it corrects (at least one correcting run per window). Bootstrap and tag changes stay immediate (ADR 0009)
 - [x] `patchgate-cli instance reconcile`: run the drift check now (ignores interval and window)
-- [ ] Verified in the lab
+- [x] Verified in the lab: apps reinstalled while hardening was only reported (mixed modes); outside the window drift only reported (7-Zip removed, LLMNR re-enabled) and `reconcile` corrected both; with a 6h interval the first run inside the window corrected and the next was not due; emails show mode, trigger and window. Found and fixed: SSM returns empty output for multi-step documents unless the step is named
 
 ### 4c — Approval engine and rings
 One approval engine for every change, built once and used by app set changes and OS patches.
