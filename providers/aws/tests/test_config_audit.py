@@ -171,3 +171,39 @@ def test_accounts_are_validated_with_the_provider_schema(audit: ModuleType) -> N
     ok = audit.handler({"Records": [account({"ring": 1, "approvers": "platform"})]})
     bad = audit.handler({"Records": [account({"ring": 12, "approvers": "platform"})]})
     assert (ok["invalid"], bad["invalid"]) == (0, 1)
+
+
+def rollout_machine(monkeypatch: pytest.MonkeyPatch, audit: ModuleType) -> str:
+    arn = boto3.client("stepfunctions").create_state_machine(
+        name="patchgate-rollout",
+        definition=json.dumps({"StartAt": "P", "States": {"P": {"Type": "Pass", "End": True}}}),
+        roleArn="arn:aws:iam::123456789012:role/x",
+    )["stateMachineArn"]
+    monkeypatch.setattr(audit, "ROLLOUT_STATE_MACHINE", arn)
+    return str(arn)
+
+
+def test_gated_changes_start_a_rollout(audit: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    from patchgate.rollout import revision_of
+
+    put_default_policy()
+    arn = rollout_machine(monkeypatch, audit)
+    v1, v2 = appset([{"name": "jq"}]), appset([{"name": "jq"}, {"name": "git"}])
+    audit.handler({"Records": [record("MODIFY", v2, v1, 2, "cli")]})
+    audit.handler({"Records": [record("MODIFY", v2, v1, 2, "cli")]})  # stream retry: no duplicate
+    sfn = boto3.client("stepfunctions")
+    executions = sfn.list_executions(stateMachineArn=arn)["executions"]
+    assert len(executions) == 1 and executions[0]["name"].startswith("AppSet-tools-")
+    started = json.loads(
+        sfn.describe_execution(executionArn=executions[0]["executionArn"])["input"]
+    )
+    assert started == {"kind": "AppSet", "name": "tools", "revision": revision_of(v2)}
+
+
+def test_invalid_changes_do_not_start_a_rollout(
+    audit: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put_default_policy()
+    arn = rollout_machine(monkeypatch, audit)
+    audit.handler({"Records": [record("MODIFY", appset([]), appset([{"name": "jq"}]), 2, "x")]})
+    assert boto3.client("stepfunctions").list_executions(stateMachineArn=arn)["executions"] == []

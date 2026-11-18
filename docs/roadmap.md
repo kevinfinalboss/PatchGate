@@ -89,9 +89,9 @@ One approval engine for every change, built once and used by profile and app set
 - [x] Signed, expiring approval tokens (confirmation page decides, not the link)
 - [x] Accounts registered with their ring and approver groups (`patchgate-cli account`); per-instance override with `Patchgate:Approvers`, limited to the groups the account allows
 - [x] Profile and app set changes stay pending per ring and approver group; the resolver serves the released revision
-- [ ] Rollout workflow: ring by ring, re-plan through the bootstrap workflow, health check, soak, automatic revert on failure
-- [ ] Email approval per approver group (SES), single use, every decision recorded as audit evidence
-- [ ] `patchgate-cli rollout list | status | cancel`; `apply` shows the impact per ring
+- [x] Rollout workflow: ring by ring, re-plan through the bootstrap workflow, health check, soak, automatic revert on failure
+- [x] Email approval per approver group (SES), single use, every decision recorded as audit evidence
+- [x] `patchgate-cli rollout list | status | cancel`
 - [ ] Verified in the lab
 
 #### 4c-2 — OS patching
@@ -126,6 +126,7 @@ The lab is **ephemeral**: everything is created at the start of a test session a
 |---|---|
 | One 2–3h session (Linux `t3.micro` + Windows `t3.medium`, public IPs, disks) | ≈ US$0.25–0.50 |
 | Control plane (Step Functions, Lambda, EventBridge, SNS, StackSets, Organizations) | ≈ US$0 at lab scale |
+| Approval engine (HTTP API, SES, DynamoDB on demand) | ≈ US$0 at lab scale (HTTP API US$1 per million requests; SES US$0.10 per 1,000 emails) |
 | Typical month (~15 sessions) | ≈ US$5–10 |
 | Optional Wazuh manager | ≈ US$1 per session if created only during tests |
 

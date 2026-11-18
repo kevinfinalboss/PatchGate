@@ -23,3 +23,12 @@ output "config_table" {
 output "history_table" {
   value = aws_dynamodb_table.history.name
 }
+
+output "rollout_state_machine_arn" {
+  value = aws_sfn_state_machine.rollout.arn
+}
+
+output "approval_api_url" {
+  description = "Base URL of the approval links."
+  value       = aws_apigatewayv2_api.approvals.api_endpoint
+}

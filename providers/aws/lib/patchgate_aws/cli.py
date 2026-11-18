@@ -14,6 +14,8 @@ Examples:
     patchgate-cli instance appsets i-0123456789abcdef0 --add dotnet8
     patchgate-cli instance reconcile i-0123456789abcdef0
     patchgate-cli account set 123456789012 --ring 1 --approvers platform --allow payments
+    patchgate-cli rollout list
+    patchgate-cli rollout status AppSet-dotnet8-1a2b3c4d5e6f-1763481600
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from typing import Any
 
 import boto3
 import yaml
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
 from patchgate.plan import KINDS, CatalogError, Document, Library
@@ -209,8 +211,8 @@ class Cli:
             self.print(f"{kind}/{name}: {'updated' if current else 'created'} (version {version})")
             if gated and current is not None:
                 self.print(
-                    f"  pending: instances keep version {current.version} until a rollout "
-                    "releases it ring by ring"
+                    f"  pending: instances keep version {current.version} until the rollout "
+                    "releases it ring by ring (patchgate-cli rollout list)"
                 )
         return 0
 
@@ -283,6 +285,72 @@ class Cli:
         self.print(f"{kind}/{self.args.name}: restored version {self.args.version} as {version}")
         if gated:
             self.print("  pending: instances keep their version until a rollout releases it")
+        return 0
+
+    # ------------------------------------------------------------ rollouts
+
+    def rollout_machine(self) -> str:
+        account = self.config_session.client("sts").get_caller_identity()["Account"]
+        region = self.config_session.region_name
+        return f"arn:aws:states:{region}:{account}:stateMachine:{self.args.rollout_state_machine}"
+
+    def rollout_execution(self) -> str:
+        machine = self.rollout_machine()
+        return machine.replace(":stateMachine:", ":execution:") + f":{self.args.execution}"
+
+    def cmd_rollout_list(self) -> int:
+        sfn = self.config_session.client("stepfunctions")
+        executions = sfn.list_executions(stateMachineArn=self.rollout_machine(), maxResults=20)
+        self.print(f"{'ROLLOUT':64} {'STATUS':10} STARTED")
+        for e in executions["executions"]:
+            self.print(f"{e['name']:64} {e['status']:10} {e['startDate']:%Y-%m-%d %H:%M}")
+        return 0
+
+    def cmd_rollout_status(self) -> int:
+        sfn = self.config_session.client("stepfunctions")
+        arn = self.rollout_execution()
+        try:
+            execution = sfn.describe_execution(executionArn=arn)
+        except sfn.exceptions.ExecutionDoesNotExist as exc:
+            raise CliError(f"rollout {self.args.execution} not found") from exc
+        detail = json.loads(execution["input"])
+        self.print(
+            f"{detail['kind']}/{detail['name']}  {detail['revision'][:19]}  {execution['status']}"
+        )
+        table = self.config_session.resource("dynamodb").Table(self.args.approvals_table)
+        requests: list[dict[str, Any]] = []
+        kwargs: dict[str, Any] = {"FilterExpression": Attr("executionArn").eq(arn)}
+        while True:
+            page = table.scan(**kwargs)
+            requests += page.get("Items", [])
+            if "LastEvaluatedKey" not in page:
+                break
+            kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+        for item in sorted(requests, key=lambda i: str(i["unit"])):
+            decided = ", ".join(
+                f"{d['member']} {'approved' if d['approve'] else 'rejected'}"
+                for d in item.get("decisions", [])
+            )
+            self.print(
+                f"  approval {item['unit']:24} {item['status']:9} "
+                f"{len(item.get('instances', []))} instance(s)"
+                + (f"  ({decided})" if decided else "")
+            )
+        if not requests:
+            self.print("  no approval requests (yet)")
+        return 0
+
+    def cmd_rollout_cancel(self) -> int:
+        sfn = self.config_session.client("stepfunctions")
+        sfn.stop_execution(
+            executionArn=self.rollout_execution(),
+            error="Cancelled",
+            cause=f"cancelled with patchgate-cli by {self.caller()}",
+        )
+        self.print(
+            f"rollout {self.args.execution} cancelled; groups already released keep the new "
+            "revision, the others keep the previous one"
+        )
         return 0
 
     # ------------------------------------------------------------ accounts
@@ -429,6 +497,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--history-table", default="patchgate-config-history")
     p.add_argument("--releases-table", default="patchgate-releases")
     p.add_argument("--rollout-policy", default="default")
+    p.add_argument("--rollout-state-machine", default="patchgate-rollout")
+    p.add_argument("--approvals-table", default="patchgate-approvals")
     p.add_argument("--profile", help="AWS CLI profile (instances; also config unless overridden)")
     p.add_argument("--config-profile", help="AWS CLI profile for the hub configuration table")
     p.add_argument("--region")
@@ -468,6 +538,16 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--allow-ring-tag", action="store_true", help="honour Patchgate:Ring")
     s.add_argument("--description")
 
+    rollout = sub.add_parser(
+        "rollout", help="follow or cancel rollouts of profile and app set changes"
+    )
+    rsub = rollout.add_subparsers(dest="rollout_command", required=True)
+    rsub.add_parser("list", help="recent rollouts")
+    s = rsub.add_parser("status", help="a rollout and its approval requests")
+    s.add_argument("execution")
+    s = rsub.add_parser("cancel", help="stop a rollout (pending approvals are discarded)")
+    s.add_argument("execution")
+
     instance = sub.add_parser("instance", help="inspect, assign app sets or reconcile instances")
     isub = instance.add_subparsers(dest="instance_command", required=True)
     s = isub.add_parser("show")
@@ -491,7 +571,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     cli = Cli(args)
     command = args.command
-    if command in ("instance", "account"):
+    if command in ("instance", "account", "rollout"):
         command = f"{command}_{getattr(args, command + '_command')}"
     try:
         return int(getattr(cli, f"cmd_{command}")())

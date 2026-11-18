@@ -152,6 +152,11 @@ data "aws_iam_policy_document" "audit" {
     resources = [aws_dynamodb_table.releases.arn]
   }
   statement {
+    sid       = "StartRollout"
+    actions   = ["states:StartExecution"]
+    resources = [local.rollout_state_machine_arn]
+  }
+  statement {
     sid       = "Alert"
     actions   = ["sns:Publish"]
     resources = [aws_sns_topic.notifications.arn]
@@ -191,6 +196,8 @@ resource "aws_lambda_function" "audit" {
       PATCHGATE_ALERT_TOPIC    = aws_sns_topic.notifications.arn
       PATCHGATE_CONFIG_TABLE   = aws_dynamodb_table.config.name
       PATCHGATE_RELEASES_TABLE = aws_dynamodb_table.releases.name
+
+      PATCHGATE_ROLLOUT_STATE_MACHINE = local.rollout_state_machine_arn
     }
   }
 

@@ -2,7 +2,7 @@
 
 AWS implementation of the [provider contract](../README.md).
 
-> Status: multi-account onboarding, bootstrap, hardening with drift and application lifecycle are implemented and verified in the lab. Patch Manager, approvals (API Gateway), Image Builder, Inspector and the reporting services below are planned for Phases 4b–6.
+> Status: multi-account onboarding, bootstrap, hardening with drift, application lifecycle and drift control are implemented and verified in the lab; the approval engine (rollouts with email approval) is implemented. Patch Manager, Image Builder, Inspector and the reporting services below are planned for Phases 4c-2–6.
 
 ## Services used
 
@@ -14,7 +14,7 @@ AWS implementation of the [provider contract](../README.md).
 | Execution on instances | AWS Systems Manager Run Command, State Manager |
 | Patching | AWS Systems Manager Patch Manager |
 | Snapshots | Amazon EBS snapshots / AWS Backup |
-| Approvals | Amazon SNS (email), Amazon API Gateway, AWS Lambda |
+| Approvals | Amazon SES (one signed link per approver), API Gateway HTTP API, AWS Lambda, Step Functions task tokens |
 | Images | EC2 Image Builder |
 | Vulnerabilities and compliance | Amazon Inspector, AWS Security Hub |
 | Inventory and reports | SSM Resource Data Sync, Amazon S3, Amazon Athena |
@@ -70,8 +70,18 @@ patchgate-cli --config-profile hub account set 111111111111 --ring 0 --approvers
 patchgate-cli --config-profile hub account set 222222222222 --ring 1 --approvers platform --allow payments
 ```
 
-Profiles and app sets are **gated**: `apply` keeps instances on the current revision until a
-rollout releases the new one ring by ring (the CLI prints `pending`). Accounts and approver
+Profiles and app sets are **gated**: `apply` keeps instances on the current revision and starts a
+rollout that releases the new one ring by ring (the CLI prints `pending`). Follow it with:
+
+```bash
+patchgate-cli --config-profile hub rollout list
+patchgate-cli --config-profile hub rollout status AppSet-dotnet8-1a2b3c4d5e6f-1763481600
+patchgate-cli --config-profile hub rollout cancel AppSet-dotnet8-1a2b3c4d5e6f-1763481600
+```
+
+Approval emails come from Amazon SES. After the first hub deploy, click the verification email
+AWS sends to the sender address. While the account is in the SES sandbox, every approver address
+must be verified too (`aws sesv2 create-email-identity --email-identity <address>`). Accounts and approver
 groups (people's emails) live only in the configuration table, never in Git. Instances in
 unregistered accounts are treated as the last (most protected) ring.
 

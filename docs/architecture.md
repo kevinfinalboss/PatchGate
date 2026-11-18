@@ -111,24 +111,30 @@ and publishes findings as `io.patchgate` events that the hub emails. `patchgate-
 reconcile` sends the same document with `Force=true` to check now
 ([ADR 0009](adr/0009-drift-modes-per-category-and-maintenance-window.md)).
 
-### Patching with approval (Day 2)
+### Change rollout with approval (Day 2)
+
+Profiles and app sets are **gated** ([ADR 0010](adr/0010-approval-engine-rings-and-approver-groups.md)): a new revision reaches instances ring by ring, and rings that need approval ask each approver group for its own instances.
 
 ```mermaid
 flowchart TD
-    S[Scheduled start] --> SC[Scan all rings]
-    SC --> R0[Ring 0 — dev]
-    R0 --> SN0[Snapshot] --> P0[Patch OS + Chocolatey] --> H0{Health check}
-    H0 -- fail --> RB0[Rollback + alert]
-    H0 -- ok --> SOAK[Soak time]
-    SOAK --> AP{Email approval<br/>task token}
-    AP -- rejected / timeout --> STOP[Stop + report]
-    AP -- approved --> R1[Ring 1 — prod]
-    R1 --> SN1[Snapshot] --> P1[Patch] --> H1{Health check}
-    H1 -- fail --> RB1[Rollback + alert]
-    H1 -- ok --> REP[Evidence report]
+    C[patchgate-cli apply<br/>profile or app set] --> P[Pin current revision<br/>config audit starts the rollout]
+    P --> PL[Plan: running managed instances<br/>by ring and approver group]
+    PL --> R0[Ring 0: release, re-plan via bootstrap]
+    R0 --> H0{All runs succeeded?}
+    H0 -- no --> RV[Revert the ring + email] --> STOP[Stop]
+    H0 -- yes --> SOAK[Soak]
+    SOAK --> AP{Each approver group<br/>email link, task token}
+    AP -- rejected / expired --> KEEP[That group keeps the previous revision]
+    AP -- approved --> R1[Ring 1: release to approved groups, re-plan]
+    R1 --> H1{Healthy?}
+    H1 -- no --> RV
+    H1 -- yes --> DONE[Released everywhere if every ring took it<br/>summary email]
 ```
 
-Approval: SNS sends an email with signed approve/reject links → API Gateway → Lambda calls `SendTaskSuccess`/`SendTaskFailure` with the Step Functions task token.
+- **Ring and group** come from the account (`patchgate-cli account set`); instances may pick another allowed group with `Patchgate:Approvers`. Unregistered accounts count as the last ring.
+- **Approval:** the approvals function stores the request (with the task token) and emails each member a signed, expiring link (SES). The link opens a confirmation page; only its POST records a decision, once per member. When the group's `minApprovals` is reached, or anyone rejects, the workflow resumes.
+- **Health:** a ring is healthy when every instance's bootstrap run succeeded; otherwise, with `onFailure: revert`, its groups get the previous revision back and their instances re-plan.
+- **OS patching** (Phase 4c-2) reuses this workflow with Patch Manager, snapshots and rollback.
 
 ### Emergency patch (Phase 6)
 
@@ -136,11 +142,12 @@ An Inspector finding with CVSS ≥ 9 on a managed instance starts the patch work
 
 ## Identity and permissions
 
-- Hub roles (`patchgate-hub-orchestrator`, `patchgate-hub-resolver`) may assume only `Patchgate-Execution`, and only in accounts of the organization (`aws:ResourceOrgID`), so onboarded accounts work without hub changes ([ADR 0006](adr/0006-org-wide-hub-access-and-stackset-spokes.md)).
+- Hub roles (`patchgate-hub-orchestrator`, `patchgate-hub-resolver`, `patchgate-hub-rollout-fn`) may assume only `Patchgate-Execution`, and only in accounts of the organization (`aws:ResourceOrgID`), so onboarded accounts work without hub changes ([ADR 0006](adr/0006-org-wide-hub-access-and-stackset-spokes.md)).
 - `Patchgate-Execution` trusts those exact hub role ARNs and allows:
   - `ssm:SendCommand` only with `Patchgate-*` documents and on instances tagged `Patchgate:Managed=true`;
   - `ec2:CreateTags` only for tag keys `Patchgate:*`;
   - read-only describe calls.
+- The rollout workflow (`patchgate-hub-rollout`) only invokes the rollout and approvals functions and starts the bootstrap workflow; the approvals function may only send email from the configured SES identity and resume the rollout workflow.
 - CI/CD uses GitHub OIDC; no long-lived access keys.
 
 See the [threat model](security/threat-model.md).

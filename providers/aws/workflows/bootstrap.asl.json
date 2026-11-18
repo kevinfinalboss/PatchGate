@@ -1,11 +1,27 @@
 {
-  "Comment": "Patchgate bootstrap: on launch or when Patchgate tags change, resolve the instance, wait for SSM, apply its plan, record the result.",
+  "Comment": "Patchgate bootstrap: on launch, start, Patchgate tag changes or a rollout, resolve the instance, wait for SSM, apply its plan, record the result.",
   "StartAt": "WhichEvent",
   "States": {
     "WhichEvent": {
       "Type": "Choice",
-      "Choices": [{ "Variable": "$.detail-type", "StringEquals": "Tag Change on Resource", "Next": "InitFromTagChange" }],
+      "Choices": [
+        { "Variable": "$.source", "StringEquals": "patchgate.rollout", "Next": "InitFromRollout" },
+        { "Variable": "$.detail-type", "StringEquals": "Tag Change on Resource", "Next": "InitFromTagChange" }
+      ],
       "Default": "Init"
+    },
+    "InitFromRollout": {
+      "Type": "Pass",
+      "Comment": "Started by patchgate-rollout; the rollout emails one summary, so no per-instance success email.",
+      "Parameters": {
+        "accountId.$": "$.accountId",
+        "region.$": "$.region",
+        "instanceId.$": "$.instanceId",
+        "quiet": true,
+        "retry": { "count": 0 },
+        "lockRetry": { "count": 0 }
+      },
+      "Next": "Resolve"
     },
     "InitFromTagChange": {
       "Type": "Pass",
@@ -13,6 +29,7 @@
         "accountId.$": "$.account",
         "region.$": "$.region",
         "instanceId.$": "States.ArrayGetItem(States.StringSplit($.resources[0], '/'), 1)",
+        "quiet": false,
         "retry": { "count": 0 },
         "lockRetry": { "count": 0 }
       },
@@ -24,6 +41,7 @@
         "accountId.$": "$.account",
         "region.$": "$.region",
         "instanceId.$": "$.detail.instance-id",
+        "quiet": false,
         "retry": { "count": 0 },
         "lockRetry": { "count": 0 }
       },
@@ -165,7 +183,12 @@
         ]
       },
       "ResultPath": null,
-      "Next": "NotifySuccess"
+      "Next": "IsQuiet"
+    },
+    "IsQuiet": {
+      "Type": "Choice",
+      "Choices": [{ "Variable": "$.quiet", "BooleanEquals": true, "Next": "ReleaseLock" }],
+      "Default": "NotifySuccess"
     },
     "NotifySuccess": {
       "Type": "Task",

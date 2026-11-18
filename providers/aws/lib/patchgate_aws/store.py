@@ -92,6 +92,17 @@ class ReleaseStore:
                 return False
             raise
 
+    def put(self, kind: str, name: str, released: dict[str, str], by: str) -> None:
+        """Replace the releases of a document (one rollout stage writes at a time)."""
+        self.table.put_item(
+            Item={
+                "id": f"{kind}#{name}",
+                "released": released,
+                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "updatedBy": by,
+            }
+        )
+
 
 class ConfigStore:
     def __init__(

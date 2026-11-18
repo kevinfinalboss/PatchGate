@@ -8,6 +8,8 @@ triggers an alert. The resolver refuses invalid documents regardless.
 Safety net for gated kinds (ADR 0010): when a profile or app set changes without releases
 recorded (edited in the console or re-seeded by a deploy instead of through patchgate-cli), the
 previous revision is pinned for every ring so the change waits for a rollout.
+
+Every content change of a gated document then starts the patchgate-rollout workflow.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ ALERT_TOPIC = os.environ.get("PATCHGATE_ALERT_TOPIC", "")
 CONFIG_TABLE = os.environ.get("PATCHGATE_CONFIG_TABLE", "patchgate-config")
 RELEASES_TABLE = os.environ.get("PATCHGATE_RELEASES_TABLE", "patchgate-releases")
 ROLLOUT_POLICY = os.environ.get("PATCHGATE_ROLLOUT_POLICY", "default")
+ROLLOUT_STATE_MACHINE = os.environ.get("PATCHGATE_ROLLOUT_STATE_MACHINE", "")
 
 
 def gated_kinds() -> tuple[str, ...]:
@@ -38,6 +41,31 @@ def gated_kinds() -> tuple[str, ...]:
     if policy is None:
         return ()
     return tuple(policy.document.get("spec", {}).get("kinds", GATED_KINDS))
+
+
+def start_rollout(kind: str, name: str, new_document: str, changed_at: float) -> None:
+    if not ROLLOUT_STATE_MACHINE:
+        return
+    try:
+        invalid = validate(json.loads(new_document))
+    except json.JSONDecodeError:
+        invalid = ["not JSON"]
+    if invalid:
+        LOG.warning("%s/%s is invalid; no rollout (an alert is sent)", kind, name)
+        return
+    revision = revision_of(new_document)
+    # Execution names: kind-name prefix (used to find older rollouts) + revision + time
+    prefix = f"{kind}-{name}"[:48]
+    execution = f"{prefix}-{revision[7:19]}-{int(changed_at)}"
+    try:
+        boto3.client("stepfunctions").start_execution(
+            stateMachineArn=ROLLOUT_STATE_MACHINE,
+            name=execution,
+            input=json.dumps({"kind": kind, "name": name, "revision": revision}),
+        )
+        LOG.info("rollout %s started for %s/%s", execution, kind, name)
+    except boto3.client("stepfunctions").exceptions.ExecutionAlreadyExists:
+        LOG.info("rollout %s already started (stream retry)", execution)
 
 
 def pin_previous(kind: str, name: str, old_document: str) -> None:
@@ -80,6 +108,7 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, int]:
             gated = gated_kinds() if gated is None else gated
             if kind in gated and old.get("document"):
                 pin_previous(kind, name, old["document"])
+                start_rollout(kind, name, new["document"], changed_at)
         if record["eventName"] != "REMOVE":
             try:
                 errors = validate(json.loads(new["document"]), f"{kind}/{name}")

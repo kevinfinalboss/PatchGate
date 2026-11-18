@@ -1,0 +1,475 @@
+{
+  "Comment": "Patchgate rollout (ADR 0010): a new revision of a profile or app set goes ring by ring. Rings that need approval ask each approver group; approved groups get the revision and their instances re-plan through the bootstrap workflow; a failed ring is reverted and stops the rollout.",
+  "StartAt": "Plan",
+  "States": {
+    "Plan": {
+      "Type": "Task",
+      "Resource": "${rollout_arn}",
+      "Parameters": {
+        "action": "plan",
+        "kind.$": "$.kind",
+        "name.$": "$.name",
+        "revision.$": "$.revision",
+        "executionArn.$": "$$.Execution.Id"
+      },
+      "ResultPath": "$.plan",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "Report"
+        }
+      ],
+      "Next": "Skip?"
+    },
+    "Skip?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.plan.skip",
+          "BooleanEquals": true,
+          "Next": "Skipped"
+        }
+      ],
+      "Default": "Rings"
+    },
+    "Skipped": {
+      "Type": "Succeed"
+    },
+    "Rings": {
+      "Type": "Map",
+      "Comment": "One ring at a time, in policy order.",
+      "ItemsPath": "$.plan.stages",
+      "MaxConcurrency": 1,
+      "ItemSelector": {
+        "stage.$": "$$.Map.Item.Value",
+        "kind.$": "$.kind",
+        "name.$": "$.name",
+        "revision.$": "$.revision",
+        "version.$": "$.plan.version",
+        "previous.$": "$.plan.previous",
+        "onFailure.$": "$.plan.onFailure"
+      },
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "Empty?",
+        "States": {
+          "Empty?": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.stage.empty",
+                "BooleanEquals": true,
+                "Next": "NoInstances"
+              }
+            ],
+            "Default": "Approval?"
+          },
+          "NoInstances": {
+            "Type": "Pass",
+            "Parameters": {
+              "ring.$": "$.stage.ring",
+              "approved": [],
+              "declined": [],
+              "instances": []
+            },
+            "End": true
+          },
+          "Approval?": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.stage.approval",
+                "BooleanEquals": true,
+                "Next": "AskEachGroup"
+              }
+            ],
+            "Default": "NoApprovalNeeded"
+          },
+          "AskEachGroup": {
+            "Type": "Map",
+            "Comment": "Every approver group of the ring decides for its own instances, in parallel.",
+            "ItemsPath": "$.stage.units",
+            "ItemSelector": {
+              "unit.$": "$$.Map.Item.Value",
+              "kind.$": "$.kind",
+              "name.$": "$.name",
+              "revision.$": "$.revision",
+              "version.$": "$.version",
+              "timeoutSeconds.$": "$.stage.approvalTimeoutSeconds"
+            },
+            "ItemProcessor": {
+              "ProcessorConfig": {
+                "Mode": "INLINE"
+              },
+              "StartAt": "RequestApproval",
+              "States": {
+                "RequestApproval": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+                  "TimeoutSecondsPath": "$.timeoutSeconds",
+                  "Parameters": {
+                    "FunctionName": "${approvals_arn}",
+                    "Payload": {
+                      "action": "request",
+                      "taskToken.$": "$$.Task.Token",
+                      "executionArn.$": "$$.Execution.Id",
+                      "unit.$": "$.unit",
+                      "kind.$": "$.kind",
+                      "name.$": "$.name",
+                      "revision.$": "$.revision",
+                      "version.$": "$.version",
+                      "timeoutSeconds.$": "$.timeoutSeconds"
+                    }
+                  },
+                  "ResultPath": "$.decision",
+                  "Catch": [
+                    {
+                      "ErrorEquals": [
+                        "States.Timeout"
+                      ],
+                      "ResultPath": null,
+                      "Next": "Expired"
+                    },
+                    {
+                      "ErrorEquals": [
+                        "States.ALL"
+                      ],
+                      "ResultPath": "$.error",
+                      "Next": "NotAsked"
+                    }
+                  ],
+                  "Next": "Decided"
+                },
+                "Expired": {
+                  "Type": "Pass",
+                  "Parameters": {
+                    "unit.$": "$.unit.unit",
+                    "decision": {
+                      "approved": false,
+                      "outcome": "expired"
+                    }
+                  },
+                  "End": true
+                },
+                "NotAsked": {
+                  "Type": "Pass",
+                  "Comment": "The request could not be sent (for example an approver group that does not exist): not approved.",
+                  "Parameters": {
+                    "unit.$": "$.unit.unit",
+                    "decision": {
+                      "approved": false,
+                      "outcome": "not asked"
+                    }
+                  },
+                  "End": true
+                },
+                "Decided": {
+                  "Type": "Pass",
+                  "Parameters": {
+                    "unit.$": "$.unit.unit",
+                    "decision.$": "$.decision"
+                  },
+                  "End": true
+                }
+              }
+            },
+            "ResultPath": "$.decisions",
+            "Next": "Release"
+          },
+          "Release": {
+            "Type": "Task",
+            "Resource": "${rollout_arn}",
+            "Parameters": {
+              "action": "release",
+              "kind.$": "$.kind",
+              "name.$": "$.name",
+              "revision.$": "$.revision",
+              "stage.$": "$.stage",
+              "decisions.$": "$.decisions"
+            },
+            "ResultPath": "$.released",
+            "Next": "Apply",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2
+              }
+            ]
+          },
+          "Apply": {
+            "Type": "Map",
+            "Comment": "Re-plan every released instance through the bootstrap workflow.",
+            "ItemsPath": "$.released.instances",
+            "MaxConcurrency": 5,
+            "ItemSelector": {
+              "instance.$": "$$.Map.Item.Value"
+            },
+            "ItemProcessor": {
+              "ProcessorConfig": {
+                "Mode": "INLINE"
+              },
+              "StartAt": "Bootstrap",
+              "States": {
+                "Bootstrap": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::states:startExecution.sync:2",
+                  "Parameters": {
+                    "StateMachineArn": "${bootstrap_arn}",
+                    "Input": {
+                      "source": "patchgate.rollout",
+                      "accountId.$": "$.instance.accountId",
+                      "instanceId.$": "$.instance.instanceId",
+                      "region": "${region}",
+                      "AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID.$": "$$.Execution.Id"
+                    }
+                  },
+                  "ResultSelector": {
+                    "status.$": "$.Status"
+                  },
+                  "Catch": [
+                    {
+                      "ErrorEquals": [
+                        "States.ALL"
+                      ],
+                      "ResultPath": null,
+                      "Next": "Failed"
+                    }
+                  ],
+                  "Next": "Succeeded"
+                },
+                "Succeeded": {
+                  "Type": "Pass",
+                  "Parameters": {
+                    "instanceId.$": "$.instance.instanceId",
+                    "accountId.$": "$.instance.accountId",
+                    "ok": true
+                  },
+                  "End": true
+                },
+                "Failed": {
+                  "Type": "Pass",
+                  "Parameters": {
+                    "instanceId.$": "$.instance.instanceId",
+                    "accountId.$": "$.instance.accountId",
+                    "ok": false
+                  },
+                  "End": true
+                }
+              }
+            },
+            "ResultPath": "$.applied",
+            "Next": "Evaluate"
+          },
+          "Evaluate": {
+            "Type": "Task",
+            "Resource": "${rollout_arn}",
+            "Parameters": {
+              "action": "evaluate",
+              "kind.$": "$.kind",
+              "name.$": "$.name",
+              "released.$": "$.released",
+              "applied.$": "$.applied",
+              "previous.$": "$.previous",
+              "onFailure.$": "$.onFailure"
+            },
+            "ResultPath": "$.health",
+            "Next": "Healthy?",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2
+              }
+            ]
+          },
+          "Healthy?": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.health.healthy",
+                "BooleanEquals": true,
+                "Next": "Soak"
+              }
+            ],
+            "Default": "Reapply"
+          },
+          "Reapply": {
+            "Type": "Map",
+            "Comment": "Put reverted instances back on the previous revision.",
+            "ItemsPath": "$.health.reapply",
+            "MaxConcurrency": 5,
+            "ItemSelector": {
+              "instance.$": "$$.Map.Item.Value"
+            },
+            "ItemProcessor": {
+              "ProcessorConfig": {
+                "Mode": "INLINE"
+              },
+              "StartAt": "BootstrapPrevious",
+              "States": {
+                "BootstrapPrevious": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::states:startExecution.sync:2",
+                  "Parameters": {
+                    "StateMachineArn": "${bootstrap_arn}",
+                    "Input": {
+                      "source": "patchgate.rollout",
+                      "accountId.$": "$.instance.accountId",
+                      "instanceId.$": "$.instance.instanceId",
+                      "region": "${region}",
+                      "AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID.$": "$$.Execution.Id"
+                    }
+                  },
+                  "ResultSelector": {
+                    "status.$": "$.Status"
+                  },
+                  "Catch": [
+                    {
+                      "ErrorEquals": [
+                        "States.ALL"
+                      ],
+                      "ResultPath": null,
+                      "Next": "ReapplyDone"
+                    }
+                  ],
+                  "Next": "ReapplyDone"
+                },
+                "ReapplyDone": {
+                  "Type": "Succeed"
+                }
+              }
+            },
+            "ResultPath": null,
+            "Next": "RingFailed"
+          },
+          "RingFailed": {
+            "Type": "Fail",
+            "Error": "RingUnhealthy",
+            "Cause": "Instances failed to apply the new revision; the ring was reverted when onFailure is revert"
+          },
+          "Soak": {
+            "Type": "Wait",
+            "SecondsPath": "$.stage.soakSeconds",
+            "Next": "RingDone"
+          },
+          "RingDone": {
+            "Type": "Pass",
+            "Parameters": {
+              "ring.$": "$.stage.ring",
+              "approved.$": "$.released.approved",
+              "declined.$": "$.released.declined",
+              "instances.$": "$.released.instances"
+            },
+            "End": true
+          },
+          "NoApprovalNeeded": {
+            "Type": "Pass",
+            "Result": [],
+            "ResultPath": "$.decisions",
+            "Next": "Release"
+          }
+        }
+      },
+      "ResultPath": "$.results",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "Report"
+        }
+      ],
+      "Next": "Complete"
+    },
+    "Complete": {
+      "Type": "Task",
+      "Resource": "${rollout_arn}",
+      "Parameters": {
+        "action": "complete",
+        "kind.$": "$.kind",
+        "name.$": "$.name",
+        "revision.$": "$.revision",
+        "version.$": "$.plan.version",
+        "stages.$": "$.plan.stages",
+        "results.$": "$.results"
+      },
+      "ResultPath": "$.completed",
+      "End": true,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ]
+    },
+    "Report": {
+      "Type": "Task",
+      "Resource": "${rollout_arn}",
+      "Parameters": {
+        "action": "report",
+        "kind.$": "$.kind",
+        "name.$": "$.name",
+        "error.$": "$.error"
+      },
+      "ResultPath": null,
+      "Next": "Stopped",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ]
+    },
+    "Stopped": {
+      "Type": "Fail",
+      "Error": "RolloutStopped",
+      "Cause": "See the Report state input and the email for details"
+    }
+  }
+}

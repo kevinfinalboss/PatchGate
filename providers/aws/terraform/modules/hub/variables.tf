@@ -49,3 +49,9 @@ variable "default_approver_group" {
     error_message = "Must be an approver group name (lowercase letters, digits and dashes)."
   }
 }
+
+variable "approval_sender_email" {
+  description = "Verified SES identity that sends approval emails (defaults to notification_email). In the SES sandbox approvers must be verified identities too."
+  type        = string
+  default     = null
+}

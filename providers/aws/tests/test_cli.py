@@ -25,6 +25,7 @@ def create_tables() -> None:
         ("patchgate-config", "kind", "name"),
         ("patchgate-config-history", "id", "changeId"),
         ("patchgate-releases", "id", None),
+        ("patchgate-approvals", "requestId", None),
     ):
         keys = [(hash_key, "HASH")] + ([(range_key, "RANGE")] if range_key else [])
         client.create_table(
@@ -289,3 +290,38 @@ def test_changing_a_gated_document_keeps_instances_on_the_current_revision(
     assert ReleaseStore("patchgate-releases").get("AppSet", "tools") == {"*": first.revision}
     run("apply", "-f", write(tmp_path, appset("tools", "git")))
     assert ReleaseStore("patchgate-releases").get("AppSet", "tools") == {"*": first.revision}
+
+
+def test_rollout_list_status_and_cancel(aws: ConfigStore) -> None:
+    sfn = boto3.client("stepfunctions", region_name=REGION)
+    machine = sfn.create_state_machine(
+        name="patchgate-rollout",
+        definition=json.dumps(
+            {"StartAt": "W", "States": {"W": {"Type": "Wait", "Seconds": 600, "End": True}}}
+        ),
+        roleArn="arn:aws:iam::123456789012:role/x",
+    )["stateMachineArn"]
+    execution = sfn.start_execution(
+        stateMachineArn=machine,
+        name="AppSet-dotnet8-1a2b3c4d5e6f-1",
+        input=json.dumps({"kind": "AppSet", "name": "dotnet8", "revision": "sha256:" + "a" * 64}),
+    )["executionArn"]
+    boto3.resource("dynamodb", region_name=REGION).Table("patchgate-approvals").put_item(
+        Item={
+            "requestId": "r1",
+            "executionArn": execution,
+            "unit": "1:payments",
+            "status": "pending",
+            "instances": ["i-1", "i-2"],
+            "decisions": [{"member": "ana@example.com", "approve": True}],
+        }
+    )
+    code, out, _ = run("rollout", "list")
+    assert code == 0 and "AppSet-dotnet8-1a2b3c4d5e6f-1" in out and "RUNNING" in out
+    code, out, _ = run("rollout", "status", "AppSet-dotnet8-1a2b3c4d5e6f-1")
+    assert code == 0 and "AppSet/dotnet8" in out
+    assert "1:payments" in out and "2 instance(s)" in out and "ana@example.com approved" in out
+    assert run("rollout", "status", "nope")[0] == 1
+    code, out, _ = run("rollout", "cancel", "AppSet-dotnet8-1a2b3c4d5e6f-1")
+    assert code == 0 and "cancelled" in out
+    assert sfn.describe_execution(executionArn=execution)["status"] == "ABORTED"
