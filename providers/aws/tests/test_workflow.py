@@ -107,3 +107,12 @@ def test_bootstrap_started_by_rollout_skips_the_per_instance_email() -> None:
     assert states["WhichEvent"]["Choices"][0]["Next"] == "InitFromRollout"
     assert states["InitFromRollout"]["Parameters"]["quiet"] is True
     assert states["TagSuccess"]["Next"] == "IsQuiet"
+
+
+@pytest.mark.parametrize("path", sorted(WORKFLOWS.glob("*.asl.json")), ids=lambda p: p.name)
+def test_selected_results_never_replace_the_state_input(path: Path) -> None:
+    """Found in the lab: a ResultSelector without ResultPath replaced the input, and the next
+    state's JSONPath failed with States.Runtime, which no Catch (not even States.ALL) handles."""
+    for name, state in all_states(render(path)).items():
+        if "ResultSelector" in state and state.get("Type") == "Task":
+            assert "ResultPath" in state, f"{path.name}: {name} would replace its input"

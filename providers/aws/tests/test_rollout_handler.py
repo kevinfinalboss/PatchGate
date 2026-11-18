@@ -363,3 +363,46 @@ def test_newer_rollouts_stop_older_ones_of_the_same_document(rollout: ModuleType
     assert stopped == ["AppSet-devtools-aaaaaaaaaaaa-1"]
     assert sfn.describe_execution(executionArn=old)["status"] == "ABORTED"
     assert sfn.describe_execution(executionArn=other)["status"] == "RUNNING"
+
+
+def test_rollouts_that_end_without_their_report_are_reported(
+    rollout: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[str] = []
+    monkeypatch.setattr(rollout, "notify", lambda subject, message: sent.append(subject))
+    sfn = boto3.client("stepfunctions")
+    machine = sfn.create_state_machine(
+        name="patchgate-rollout",
+        definition=json.dumps(
+            {"StartAt": "W", "States": {"W": {"Type": "Wait", "Seconds": 600, "End": True}}}
+        ),
+        roleArn=f"arn:aws:iam::{ACCOUNT}:role/x",
+    )["stateMachineArn"]
+    arn = sfn.start_execution(
+        stateMachineArn=machine,
+        name="AppSet-devtools-aaaaaaaaaaaa-1",
+        input=json.dumps({"kind": "AppSet", "name": "devtools"}),
+    )["executionArn"]
+    sfn.stop_execution(executionArn=arn, error="Cancelled", cause="by test")
+
+    def event(status: str) -> dict[str, Any]:
+        return {"source": "aws.states", "detail": {"status": status, "executionArn": arn}}
+
+    assert rollout.handler(event("ABORTED")) == {"reported": True}
+    assert sent == ["[Patchgate] Rollout ABORTED: AppSet/devtools"]
+    assert rollout.handler(event("SUCCEEDED")) == {"reported": False}
+
+    original = rollout.boto3.client
+
+    class Stopped:
+        def describe_execution(self, executionArn: str) -> dict[str, Any]:  # noqa: N803
+            return {"error": "RolloutStopped", "name": "x"}
+
+    monkeypatch.setattr(
+        rollout.boto3,
+        "client",
+        lambda service, *a, **k: (
+            Stopped() if service == "stepfunctions" else original(service, *a, **k)
+        ),
+    )
+    assert rollout.handler(event("FAILED")) == {"reported": False}  # Report already emailed

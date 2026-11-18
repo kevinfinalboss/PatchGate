@@ -10,6 +10,10 @@ The workflow orders the steps (rings, approvals, soak); this function does the w
             what they had before (onFailure: revert) and return the instances to re-plan.
 - complete: release the revision to everyone when every ring took it; email a summary.
 - report:   email why a rollout stopped.
+
+It also receives EventBridge "Step Functions Execution Status Change" events for the rollout
+workflow, so a rollout that ends without reaching its Report state (a runtime error no Catch can
+handle, a timeout, a cancel) is still reported.
 """
 
 from __future__ import annotations
@@ -336,6 +340,30 @@ def report(event: dict[str, Any]) -> dict[str, Any]:
     return {"reported": True}
 
 
+def execution_ended(event: dict[str, Any]) -> dict[str, Any]:
+    detail = event.get("detail") or {}
+    status = str(detail.get("status", ""))
+    arn = str(detail.get("executionArn", ""))
+    if status not in ("FAILED", "TIMED_OUT", "ABORTED") or ":execution:" not in arn:
+        return {"reported": False}
+    execution = boto3.client("stepfunctions").describe_execution(executionArn=arn)
+    if execution.get("error") == "RolloutStopped":
+        return {"reported": False}  # the workflow's Report state already sent the details
+    try:
+        started = json.loads(execution.get("input") or "{}")
+    except json.JSONDecodeError:
+        started = {}
+    document = f"{started.get('kind', '?')}/{started.get('name', '?')}"
+    notify(
+        f"[Patchgate] Rollout {status}: {document}",
+        f"Rollout {execution.get('name')} of {document} ended with status {status}.\n\n"
+        f"Error: {execution.get('error', '-')}\n{str(execution.get('cause', ''))[:1500]}\n\n"
+        "Groups already released keep the new revision; the others keep the previous one. "
+        "Check with: patchgate-cli rollout status " + str(execution.get("name")),
+    )
+    return {"reported": True}
+
+
 ACTIONS = {
     "plan": plan,
     "release": release_stage,
@@ -346,6 +374,8 @@ ACTIONS = {
 
 
 def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
+    if event.get("source") == "aws.states":
+        return execution_ended(event)
     action = event.get("action")
     if action not in ACTIONS:
         raise RolloutError(f"unknown action {action!r}")

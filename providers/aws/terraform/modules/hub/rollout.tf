@@ -378,3 +378,31 @@ resource "aws_sfn_state_machine" "rollout" {
 
   depends_on = [aws_iam_role_policy.rollout_workflow]
 }
+
+# Safety net: report rollouts that end without reaching their Report state (runtime errors that
+# no Catch handles, timeouts, cancels). Step Functions publishes these on the default bus.
+resource "aws_cloudwatch_event_rule" "rollout_ended" {
+  name        = "patchgate-rollout-ended"
+  description = "Rollout executions that failed, timed out or were aborted."
+  event_pattern = jsonencode({
+    source        = ["aws.states"]
+    "detail-type" = ["Step Functions Execution Status Change"]
+    detail = {
+      status          = ["FAILED", "TIMED_OUT", "ABORTED"]
+      stateMachineArn = [local.rollout_state_machine_arn]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "rollout_ended" {
+  rule = aws_cloudwatch_event_rule.rollout_ended.name
+  arn  = aws_lambda_function.rollout.arn
+}
+
+resource "aws_lambda_permission" "rollout_ended" {
+  statement_id  = "AllowRolloutEndedEvents"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.rollout.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.rollout_ended.arn
+}
