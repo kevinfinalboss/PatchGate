@@ -44,6 +44,10 @@ KIND_ALIASES = {
     "baselines": "Baseline",
     "appset": "AppSet",
     "appsets": "AppSet",
+    "rolloutpolicy": "RolloutPolicy",
+    "rolloutpolicies": "RolloutPolicy",
+    "approvergroup": "ApproverGroup",
+    "approvergroups": "ApproverGroup",
 }
 TAG_PROFILE = "Patchgate:Profile"
 TAG_APPSETS = "Patchgate:AppSets"

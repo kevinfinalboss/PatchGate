@@ -20,7 +20,7 @@ API_VERSION = "patchgate.io/v1alpha1"
 PLAN_PREFIX = "gz1:"
 MAX_ENCODED_PLAN_CHARS = 3_800
 
-KINDS = ("Agent", "Profile", "Control", "Baseline", "AppSet")
+KINDS = ("Agent", "Profile", "Control", "Baseline", "AppSet", "RolloutPolicy", "ApproverGroup")
 # Hardening levels are cumulative: a profile at level N gets every control with level <= N.
 LEVELS = {"baseline": 0, "cis-level1": 1}
 DEFAULT_DRIFT = {"interval": "30m", "mode": "enforce"}
@@ -48,6 +48,8 @@ class Library:
     controls: dict[str, Document] = field(default_factory=dict)
     baselines: dict[str, Document] = field(default_factory=dict)
     appsets: dict[str, Document] = field(default_factory=dict)
+    policies: dict[str, Document] = field(default_factory=dict)
+    approver_groups: dict[str, Document] = field(default_factory=dict)
 
     def bucket(self, kind: str) -> dict[str, Document]:
         return {
@@ -56,6 +58,8 @@ class Library:
             "Control": self.controls,
             "Baseline": self.baselines,
             "AppSet": self.appsets,
+            "RolloutPolicy": self.policies,
+            "ApproverGroup": self.approver_groups,
         }[kind]
 
     def add(self, doc: Document) -> None:
@@ -106,6 +110,16 @@ class Library:
                     errors.append(f"profile '{name}': unknown app set '{set_name}'")
                 elif appset["spec"]["platform"] != platform:
                     errors.append(f"profile '{name}': app set '{set_name}' is not for {platform}")
+        for name, policy in self.policies.items():
+            rings = [r["ring"] for r in policy["spec"]["rings"]]
+            if rings != sorted(set(rings)):
+                errors.append(f"rollout policy '{name}': rings must be unique and ascending")
+        for name, group in self.approver_groups.items():
+            spec = group["spec"]
+            if spec.get("minApprovals", 1) > len(spec["members"]):
+                errors.append(
+                    f"approver group '{name}': minApprovals exceeds the number of members"
+                )
         return errors
 
     # ------------------------------------------------------------ compilation

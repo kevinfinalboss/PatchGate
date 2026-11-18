@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://patchgate.io/schemas/v1alpha1/rolloutpolicy.schema.json",
+  "title": "Patchgate RolloutPolicy",
+  "description": "How changes to gated documents reach instances: rings in order, approval gates, soak time and what happens on failure (ADR 0010).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "patchgate.io/v1alpha1"
+    },
+    "kind": {
+      "const": "RolloutPolicy"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rings"
+      ],
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "default": [
+            "AppSet",
+            "Profile"
+          ],
+          "description": "Document kinds whose changes are rolled out ring by ring.",
+          "items": {
+            "enum": [
+              "AppSet",
+              "Profile"
+            ]
+          }
+        },
+        "rings": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "description": "Rings in rollout order (ascending ring numbers).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ring"
+            ],
+            "properties": {
+              "ring": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9
+              },
+              "approval": {
+                "enum": [
+                  "none",
+                  "required"
+                ],
+                "default": "none",
+                "description": "required: each approver group of the ring approves its own instances."
+              },
+              "soak": {
+                "type": "string",
+                "pattern": "^([0-9]|[1-9][0-9]{1,3})(m|h)$",
+                "description": "Wait after the ring is healthy before the next ring starts, e.g. 10m or 24h. Default 0m."
+              }
+            }
+          }
+        },
+        "approvalTimeout": {
+          "type": "string",
+          "pattern": "^([1-9]|[1-9][0-9]|1[0-5][0-9]|16[0-8])h$",
+          "default": "72h",
+          "description": "Unanswered approvals expire (and count as rejected) after this time; 1h-168h."
+        },
+        "onFailure": {
+          "enum": [
+            "revert",
+            "stop"
+          ],
+          "default": "revert",
+          "description": "revert: release the previous version to the failed ring again and stop; stop: only stop."
+        }
+      }
+    }
+  }
+}

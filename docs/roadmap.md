@@ -82,12 +82,21 @@ waves with approval. Phase 4 builds that once and reuses it for everything.
 - [x] Verified in the lab: apps reinstalled while hardening was only reported (mixed modes); outside the window drift only reported (7-Zip removed, LLMNR re-enabled) and `reconcile` corrected both; with a 6h interval the first run inside the window corrected and the next was not due; emails show mode, trigger and window. Found and fixed: SSM returns empty output for multi-step documents unless the step is named
 
 ### 4c — Approval engine and rings
-One approval engine for every change, built once and used by app set changes and OS patches.
-- [ ] Email approval: signed, single-use, expiring links with a confirmation page; every decision recorded as audit evidence
-- [ ] App set changes stay pending (instances keep the approved version) until approved
-- [ ] Rings dev → prod with health checks between rings; stop on failure
+One approval engine for every change, built once and used by profile and app set changes and OS patches (ADR 0010).
+
+#### 4c-1 — Engine and rollout of profile and app set changes
+- [x] `RolloutPolicy` and `ApproverGroup` kinds; ring, approver group, release and quorum rules as pure functions in `core/lib`
+- [x] Signed, expiring approval tokens (confirmation page decides, not the link)
+- [ ] Accounts registered with their ring and approver groups (`patchgate-cli account`); per-instance override with `Patchgate:Approvers`, limited to the groups the account allows
+- [ ] Profile and app set changes stay pending per ring and approver group; the resolver serves the released version
+- [ ] Rollout workflow: ring by ring, re-plan through the bootstrap workflow, health check, soak, automatic revert on failure
+- [ ] Email approval per approver group (SES), single use, every decision recorded as audit evidence
+- [ ] `patchgate-cli rollout list | status | cancel`; `apply` shows the impact per ring
+- [ ] Verified in the lab
+
+#### 4c-2 — OS patching
 - [ ] Patch baselines per OS and patch policy schema; Patch Manager scan/install driven by the engine
-- [ ] Pre-patch snapshot, post-patch health checks, automatic rollback
+- [ ] Pre-patch snapshot, post-patch health checks, automatic rollback (replace root volume)
 - [ ] Demo: full approval flow end to end, including a forced rollback
 
 ### After Phase 4 — Presentation

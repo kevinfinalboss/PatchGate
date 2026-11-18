@@ -233,5 +233,10 @@
   "kind": "AppSet",
   "name": "nodejs-lts",
   "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"AppSet\", \"metadata\": {\"description\": \"Node.js LTS.\", \"name\": \"nodejs-lts\"}, \"spec\": {\"apps\": [{\"name\": \"nodejs-lts\", \"version\": \"26.13.1\"}], \"platform\": \"windows\", \"prune\": true}}"
+ },
+ {
+  "kind": "RolloutPolicy",
+  "name": "default",
+  "document": "{\"apiVersion\": \"patchgate.io/v1alpha1\", \"kind\": \"RolloutPolicy\", \"metadata\": {\"description\": \"Ring 0 (dev) applies directly; ring 1 (prod) needs approval from its approver groups.\", \"name\": \"default\"}, \"spec\": {\"approvalTimeout\": \"72h\", \"kinds\": [\"AppSet\", \"Profile\"], \"onFailure\": \"revert\", \"rings\": [{\"approval\": \"none\", \"ring\": 0, \"soak\": \"10m\"}, {\"approval\": \"required\", \"ring\": 1}]}}"
  }
 ]

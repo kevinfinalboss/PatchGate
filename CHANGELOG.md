@@ -23,6 +23,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `patchgate-core` Lambda layer with hash-pinned dependencies (`make layer`).
 - Drift modes per category (`drift.agents`, `drift.apps`, `drift.hardening`) and a maintenance window (`drift.window`): outside it drift only reports; the first check inside each window corrects (ADR 0009).
 - `patchgate-cli instance reconcile` runs a drift check now, ignoring the interval and the window (`Force` parameter on the `Patchgate-Drift` document).
+- `RolloutPolicy` and `ApproverGroup` catalog kinds, a built-in `default` rollout policy (ring 0 direct, ring 1 with approval), and the rollout and approval-token rules in `core/lib` (ADR 0010). The rollout itself lands with the AWS workflow.
+
+### Deprecated
+
+- Profile `ring` field: ignored; the ring comes from the account (ADR 0010). Removed in the next `apiVersion`.
 
 ### Changed
 
@@ -43,5 +48,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Project structure split into cloud-agnostic `core/` and `providers/`.
 - Architecture, roadmap, provider contract and threat model documentation.
-- ADRs 0001–0009 covering the core/providers split, multi-account model, orchestration, bootstrap, agent catalog, StackSet onboarding, hardening engines, the configuration store and drift control.
+- ADRs 0001–0010 covering the core/providers split, multi-account model, orchestration, bootstrap, agent catalog, StackSet onboarding, hardening engines, the configuration store, drift control and the approval engine.
 - Community files: README, AGENTS.md, SECURITY, CONTRIBUTING, Code of Conduct, issue and PR templates.

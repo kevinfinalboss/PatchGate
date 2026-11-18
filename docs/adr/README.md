@@ -21,3 +21,4 @@ We record significant decisions as ADRs: short documents capturing the context, 
 | [0007](0007-pluggable-hardening-engines.md) | Pluggable hardening engines, starting with a native controls engine | Accepted |
 | [0008](0008-configuration-store-in-dynamodb.md) | Configuration store in DynamoDB, managed like AWS Instance Scheduler | Accepted |
 | [0009](0009-drift-modes-per-category-and-maintenance-window.md) | Drift modes per category and a maintenance window for drift | Accepted |
+| [0010](0010-approval-engine-rings-and-approver-groups.md) | Approval engine: rings, approver groups and per-unit releases | Accepted |

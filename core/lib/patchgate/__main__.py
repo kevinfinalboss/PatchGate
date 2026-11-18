@@ -36,7 +36,8 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"catalog OK: {len(catalog.agents)} agents, {len(catalog.controls)} controls, "
                 f"{len(catalog.baselines)} baselines, {len(catalog.appsets)} app sets, "
-                f"{len(catalog.profiles)} profiles"
+                f"{len(catalog.profiles)} profiles, {len(catalog.policies)} rollout policies, "
+                f"{len(catalog.approver_groups)} approver groups"
             )
         elif args.command == "export":
             documents = [

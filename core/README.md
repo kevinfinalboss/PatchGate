@@ -4,14 +4,15 @@ The cloud-agnostic heart of Patchgate: **what** should be installed, hardened an
 
 | Folder | Purpose |
 |---|---|
-| [`schemas/`](schemas/) | JSON Schemas for `Agent`, `Profile`, `AppSet`, `Control` and `Baseline` (`v1alpha1`) |
+| [`schemas/`](schemas/) | JSON Schemas for `Agent`, `Profile`, `AppSet`, `Control`, `Baseline`, `RolloutPolicy` and `ApproverGroup` (`v1alpha1`) |
 | [`catalog/agents/`](catalog/agents/) | Installable agents (templates included) |
 | [`catalog/profiles/`](catalog/profiles/) | Profiles selected by the `Patchgate:Profile` tag |
 | [`catalog/appsets/`](catalog/appsets/) | App bundles requested with the `Patchgate:AppSets` tag |
 | [`catalog/controls/`](catalog/controls/) | Hardening controls for the native `controls` engine |
 | [`catalog/baselines/`](catalog/baselines/) | Pinned third-party hardening content (`ansible`, `dsc` engines) |
+| [`catalog/policies/`](catalog/policies/) | Rollout policies: rings, approval gates, soak, failure handling |
 | [`scripts/`](scripts/) | Executors that run inside the VM (Linux and Windows) |
-| [`lib/`](lib/) | Python library: plan composition, schema validation, catalog CLI |
+| [`lib/`](lib/) | Python library: plan composition, schema validation, rollout and approval rules, catalog CLI |
 | [`tests/`](tests/) | Unit tests |
 
 ## Example profile

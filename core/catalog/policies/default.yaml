@@ -1,0 +1,15 @@
+apiVersion: patchgate.io/v1alpha1
+kind: RolloutPolicy
+metadata:
+  name: default
+  description: Ring 0 (dev) applies directly; ring 1 (prod) needs approval from its approver groups.
+spec:
+  kinds: [AppSet, Profile]
+  rings:
+    - ring: 0
+      approval: none
+      soak: 10m
+    - ring: 1
+      approval: required
+  approvalTimeout: 72h
+  onFailure: revert
