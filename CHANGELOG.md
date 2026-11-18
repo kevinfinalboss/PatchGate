@@ -40,6 +40,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Spokes trust the rollout function role (found in the lab: discovery was denied).
+- Rollout map tasks keep their input; rollouts that end without their report (runtime errors, timeouts, cancels) are emailed by an EventBridge rule.
+- Approval page diff is no longer double-spaced.
 - Windows: CloudWatch agent config written without BOM; installer logging no longer fails when a log shipper holds the file open (both found in the first lab run).
 - Linux: SSH controls neutralise conflicting directives in other `sshd_config.d` drop-ins.
 - Windows: DSC raises the local WinRM `MaxEnvelopeSize` for large MOFs; CIS 2.3.1.1 (disable the only local administrator) is excluded on EC2.

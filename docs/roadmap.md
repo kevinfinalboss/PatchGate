@@ -84,15 +84,15 @@ waves with approval. Phase 4 builds that once and reuses it for everything.
 ### 4c — Approval engine and rings
 One approval engine for every change, built once and used by profile and app set changes and OS patches (ADR 0010).
 
-#### 4c-1 — Engine and rollout of profile and app set changes
+#### 4c-1 — Engine and rollout of profile and app set changes ✅
 - [x] `RolloutPolicy` and `ApproverGroup` kinds; ring, approver group, release and quorum rules as pure functions in `core/lib`
 - [x] Signed, expiring approval tokens (confirmation page decides, not the link)
 - [x] Accounts registered with their ring and approver groups (`patchgate-cli account`); per-instance override with `Patchgate:Approvers`, limited to the groups the account allows
 - [x] Profile and app set changes stay pending per ring and approver group; the resolver serves the released revision
 - [x] Rollout workflow: ring by ring, re-plan through the bootstrap workflow, health check, soak, automatic revert on failure
 - [x] Email approval per approver group (SES), single use, every decision recorded as audit evidence
-- [x] `patchgate-cli rollout list | status | cancel`
-- [ ] Verified in the lab
+- [x] `patchgate-cli rollout list | start | status | cancel`
+- [x] Verified in the lab (dev and prod accounts): an app set change reached dev, waited the soak, emailed the approver group, and reached prod only after approval through the link, then was released to everyone; a broken change failed in dev, dev was reverted and re-planned, the rollout stopped with an email and prod was never touched. Found and fixed: spokes did not trust the rollout role (moto does not enforce trust policies); a map task replaced its input and failed with `States.Runtime`, which no `Catch` handles (static test added, plus an EventBridge safety net that reports rollouts ending abruptly); double-spaced diff on the approval page; approval email from a free-mail sender lands in spam (use an own domain with DKIM)
 
 #### 4c-2 — OS patching
 - [ ] Patch baselines per OS and patch policy schema; Patch Manager scan/install driven by the engine

@@ -238,7 +238,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
 
 <header class="hero" id="top">
   <div class="wrap">
-    <span class="eyebrow">Phase 4c-1 in progress: approval engine</span>
+    <span class="eyebrow">Approval engine verified in the lab; OS patching is next</span>
     <h1>Secure baselines.<br>Gated changes.</h1>
     <p class="tagline">Patchgate bootstraps, hardens and keeps Linux and Windows fleets in shape across AWS accounts. Every instance is configured from tags, corrected when it drifts, and changed ring by ring with approval.</p>
     <div class="cta">
@@ -254,7 +254,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
       <div class="stat"><b>198 / 198</b><span>CIS L1 rules compliant on re-run, Amazon Linux 2023</span></div>
       <div class="stat"><b>293 / 293</b><span>CIS L1 rules compliant on re-run, Windows Server 2022</span></div>
       <div class="stat"><b>~3 min</b><span>from launch to a configured instance, Linux and Windows</span></div>
-      <div class="stat"><b>232 tests</b><span>plus 491 IaC security checks passing in CI</span></div>
+      <div class="stat"><b>272 tests</b><span>plus 565 IaC security checks passing in CI</span></div>
     </div>
   </div>
 </header>
@@ -283,7 +283,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
       </div>
       <div class="card">
         <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
-        <h3>Gated changes <span class="pill wip">in progress</span></h3>
+        <h3>Gated changes</h3>
         <p>Profile and app set changes roll out ring by ring (dev, then prod), with email approval per approver group and automatic revert on failure.</p>
       </div>
     </div>
@@ -357,11 +357,11 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
           <text x="528" y="254" font-weight="600">SNS email</text>
           <text x="528" y="272" class="muted" font-size="12.5">results, drift, alerts</text>
 
-          <rect x="514" y="330" width="180" height="102" rx="9" style="fill: var(--surface-2); stroke: var(--border)" stroke-dasharray="4 4"/>
+          <rect x="514" y="330" width="180" height="102" rx="9" style="fill: var(--surface); stroke: var(--border)"/>
           <text x="528" y="354" font-weight="600">Rollout + approvals</text>
           <text x="528" y="372" class="muted" font-size="12.5">rings, email approval,</text>
           <text x="528" y="389" class="muted" font-size="12.5">revert on failure</text>
-          <text x="528" y="414" font-size="12" font-weight="700" style="fill: var(--wip)">IN PROGRESS</text>
+          <text x="528" y="414" class="muted" font-size="12.5">HTTP API · SES · task tokens</text>
         </g>
 
         <!-- Spokes -->
@@ -465,14 +465,19 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
 
     <div class="panel" id="p-roll" role="tabpanel" aria-labelledby="t-roll" hidden>
       <div class="flow">
-        <div class="step"><div><span class="where you">You</span><h4>Change a profile or app set</h4><p><code>patchgate-cli apply</code> validates it and pins the current revision: instances keep it until a rollout releases the new one. <span class="pill done">done</span></p></div></div>
-        <div class="step"><div><span class="where hub">Hub</span><h4>Plan by ring and approver group</h4><p>Affected instances are grouped by ring (from their account) and approver group (account default or an allowed <code>Patchgate:Approvers</code> tag). <span class="pill done">done</span></p></div></div>
-        <div class="step pending"><div><span class="where hub">Hub</span><h4>Ring 0 (dev)</h4><p>The new revision is released to dev, instances re-plan through the bootstrap workflow, health is checked, then a soak period. On failure: revert and stop. <span class="pill wip">next</span></p></div></div>
-        <div class="step pending"><div><span class="where you">Approvers</span><h4>Email approval per group</h4><p>Signed, single-use, expiring links open a confirmation page; only its button decides. Each group approves its own instances. <span class="pill wip">next</span></p></div></div>
-        <div class="step pending"><div><span class="where hub">Hub</span><h4>Ring 1 (prod)</h4><p>Approved groups get the revision; rejected groups stay on the previous one. When everyone took it, it becomes the revision for all. <span class="pill wip">next</span></p></div></div>
+        <div class="step"><div><span class="where you">You</span><h4>Change a profile or app set</h4><p><code>patchgate-cli apply</code> validates it and pins the current revision: instances keep it until a rollout releases the new one.</p></div></div>
+        <div class="step"><div><span class="where hub">Hub</span><h4>Plan by ring and approver group</h4><p>Affected instances are grouped by ring (from their account) and approver group (account default or an allowed <code>Patchgate:Approvers</code> tag).</p></div></div>
+        <div class="step"><div><span class="where hub">Hub</span><h4>Ring 0 (dev)</h4><p>The new revision is released to dev, instances re-plan through the bootstrap workflow, health is checked, then a soak period. On failure: revert and stop.</p></div></div>
+        <div class="step"><div><span class="where you">Approvers</span><h4>Email approval per group</h4><p>Signed, single-use, expiring links open a confirmation page; only its button decides. Each group approves its own instances.</p></div></div>
+        <div class="step"><div><span class="where hub">Hub</span><h4>Ring 1 (prod)</h4><p>Approved groups get the revision; rejected groups stay on the previous one. When everyone took it, it becomes the revision for all.</p></div></div>
       </div>
       <div class="aside">
-        <h4>Design notes (ADR 0010)</h4>
+        <h4>Verified in the lab (dev and prod accounts)</h4>
+        <ul>
+          <li>A change reached dev, waited the soak, emailed the approver and reached prod only after the link was approved.</li>
+          <li>A broken change failed in dev: dev was reverted, the rollout stopped, prod was never touched.</li>
+        </ul>
+        <h4 style="margin-top: 14px">Design notes (ADR 0010)</h4>
         <ul>
           <li>Releases are content revisions (sha256), so re-seeded built-in documents are tracked too.</li>
           <li>Unregistered accounts are treated as the most protected ring.</li>
@@ -512,8 +517,8 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
       <div class="phase"><span class="num">Phase 3</span><div><h3>Hardening and drift</h3><p>Native controls, full CIS L1 via Ansible (Linux) and DSC (Windows), drift correction with email.</p></div><span class="pill done">done</span></div>
       <div class="phase"><span class="num">Phase 4a</span><div><h3>App lifecycle and configuration store</h3><p>App sets, prune, configuration in DynamoDB with history and rollback, <code>patchgate-cli</code>, re-plan on tag change, per-instance lock.</p></div><span class="pill done">done</span></div>
       <div class="phase"><span class="num">Phase 4b</span><div><h3>Drift control</h3><p>Mode per category, maintenance window, on-demand reconcile.</p></div><span class="pill done">done</span></div>
-      <div class="phase current"><span class="num">Phase 4c-1</span><div><h3>Approval engine</h3><p>Done: rollout rules, approval tokens, accounts and per-ring releases. Next: rollout workflow, approval API and email (SES).</p></div><span class="pill wip">in progress</span></div>
-      <div class="phase"><span class="num">Phase 4c-2</span><div><h3>OS patching</h3><p>Patch Manager driven by the engine, pre-patch snapshot, health checks, automatic rollback.</p></div><span class="pill plan">planned</span></div>
+      <div class="phase"><span class="num">Phase 4c-1</span><div><h3>Approval engine</h3><p>Profile and app set changes ring by ring, email approval per approver group, revert on failure, <code>patchgate-cli rollout</code>.</p></div><span class="pill done">done</span></div>
+      <div class="phase current"><span class="num">Phase 4c-2</span><div><h3>OS patching</h3><p>Patch Manager driven by the same engine, pre-patch snapshot, health checks, automatic rollback.</p></div><span class="pill wip">next</span></div>
       <div class="phase"><span class="num">Phase 5–6</span><div><h3>Golden images, compliance and emergency patching</h3><p>Image Builder with an Inspector gate; compliance dashboard, MTTP and CVE-driven emergency patching.</p></div><span class="pill plan">planned</span></div>
     </div>
   </div>
@@ -531,8 +536,8 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
       <div class="card lesson"><h3>Evidence that never came</h3><p>Ansible applied the benchmark (rc=0) but no rule was recorded: the JSON callback prefixes task names with the role name.</p><p class="fix">The parser handles role-prefixed names; evidence is checked in the lab, not assumed.</p></div>
       <div class="card lesson"><h3>Python 3.13 vs. 3.12</h3><p>The Lambda layer lock was generated locally on 3.13 and missed a dependency the 3.12 runtime needed.</p><p class="fix">The lock is generated and tested inside the official Lambda image.</p></div>
       <div class="card lesson"><h3>Empty command output</h3><p>SSM returns no output for a multi-step document unless the step is named, so <code>reconcile</code> printed nothing.</p><p class="fix">The CLI polls the command, then reads the output of the right step.</p></div>
-      <div class="card lesson"><h3>A 51 KB limit</h3><p>Embedding the executors made the spoke CloudFormation template larger than the inline limit.</p><p class="fix">The template is delivered from a versioned S3 artifacts bucket.</p></div>
-      <div class="card lesson"><h3>rate() is not cron</h3><p>State Manager rejected a <code>rate()</code> schedule with apply-only-at-interval, and the StackSet update rolled back on its own.</p><p class="fix">A cron schedule; the executor decides when a check is due.</p></div>
+      <div class="card lesson"><h3>Mocks don't check trust</h3><p>The first real rollout stopped at discovery: the spokes trusted only the older hub roles, and moto does not enforce trust policies.</p><p class="fix">The rollout role is trusted by every spoke; the failure path stopped and emailed as designed.</p></div>
+      <div class="card lesson"><h3>An error no Catch can catch</h3><p>A workflow task replaced its own input; the next state failed with <code>States.Runtime</code>, which Step Functions never routes to a Catch, so no email went out.</p><p class="fix">A static test rejects the pattern, and an EventBridge rule reports any rollout that ends abruptly.</p></div>
     </div>
   </div>
 </section>
