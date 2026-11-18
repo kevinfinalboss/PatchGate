@@ -2,7 +2,7 @@
 
 AWS implementation of the [provider contract](../README.md).
 
-> Status: Phase 0 — structure only. Modules land in Phase 1 (multi-account onboarding) and Phase 2 (bootstrap).
+> Status: multi-account onboarding, bootstrap, hardening with drift and application lifecycle are implemented and verified in the lab. Patch Manager, approvals (API Gateway), Image Builder, Inspector and the reporting services below are planned for Phases 4b–6.
 
 ## Services used
 

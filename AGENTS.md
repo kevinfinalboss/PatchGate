@@ -4,7 +4,7 @@ Instructions for AI coding agents working on Patchgate. Humans: see [README.md](
 
 ## Project in one paragraph
 
-Patchgate hardens, bootstraps and patches Linux/Windows fleets across cloud accounts. The code is split into a **cloud-agnostic `core/`** and **`providers/<cloud>/`** that implement the [provider contract](providers/README.md). AWS is the only provider today. Current status: **Phase 0** (see [docs/roadmap.md](docs/roadmap.md)). Many folders are still empty; do not invent code that a phase has not asked for.
+Patchgate hardens, bootstraps and patches Linux/Windows fleets across cloud accounts. The code is split into a **cloud-agnostic `core/`** and **`providers/<cloud>/`** that implement the [provider contract](providers/README.md). AWS is the only provider today. Current status: Phases 0–3 and **4a** are done and verified in the lab; **Phase 4b** is next (see [docs/roadmap.md](docs/roadmap.md)). Do not invent code that a phase has not asked for.
 
 ## Nested instructions
 
@@ -26,13 +26,13 @@ Before editing files under these folders, read their own AGENTS.md (closest file
 
 ## Tooling and commands
 
-> These commands become available as Phase 0 tooling lands. If a command here does not work, fix this file in the same PR.
+> Run `make setup` once to create the virtualenv. If a command here does not work, fix this file in the same PR.
 
 | Task | Command |
 |---|---|
 | Run all checks | `make check` |
 | Python lint / format | `ruff check .` / `ruff format .` |
-| Python types | `mypy core/lib providers/aws/functions` |
+| Python types | `make typecheck` (mypy; each Lambda `handler.py` checked separately) |
 | Python tests | `pytest` (AWS calls mocked with `moto`; tests never touch real accounts) |
 | Terraform format | `terraform fmt -recursive providers/aws/terraform` |
 | Terraform lint | `tflint --recursive` |

@@ -1,6 +1,6 @@
 # Examples
 
-Ready-to-use deployments. Available from Phase 1.
+Ready-to-use deployments.
 
 | Example | Description |
 |---|---|

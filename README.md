@@ -7,14 +7,14 @@
 Cloud-agnostic platform to harden, bootstrap and patch Linux & Windows fleets across accounts — with approval gates and automatic rollback. Built on AWS.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-![Status](https://img.shields.io/badge/status-phase%204%20%E2%80%94%20next-yellow)
+![Status](https://img.shields.io/badge/status-phase%204b%20%E2%80%94%20next-yellow)
 
 </div>
 
 ---
 
 > [!WARNING]
-> Patchgate is in early development. Multi-account onboarding and bootstrap work end to end on AWS; hardening with drift correction works on Linux and Windows; patching with approval is next. See the [roadmap](docs/roadmap.md).
+> Patchgate is in early development. Multi-account onboarding and bootstrap work end to end on AWS; hardening with drift correction works on Linux and Windows; application lifecycle and the configuration store are done; rollouts with approval and OS patching are next. See the [roadmap](docs/roadmap.md).
 
 ## What is Patchgate?
 
@@ -32,7 +32,7 @@ Patchgate is built with a **cloud-agnostic core** and **pluggable providers**: t
 | 📦 | **Application lifecycle** — app sets per instance (tag), pinned versions, install/upgrade/remove, prune, drift; configuration in DynamoDB managed with `patchgate-cli` | ✅ Done |
 | 🚀 | **Automatic bootstrap** — a new instance receives its agents and configuration, driven only by tags | ✅ Done (Linux & Windows) |
 | 🛡️ | **CIS hardening with drift correction** — manual changes are reverted to the baseline | ✅ Done (native controls engine, full CIS via Ansible on Linux and DSC on Windows) |
-| 🔁 | **Ring-based patching with approval gates** — snapshot before, health check after, automatic rollback | Planned (Phase 4) |
+| 🔁 | **Ring-based patching with approval gates** — snapshot before, health check after, automatic rollback | Planned (Phase 4b–4c) |
 | 🖼️ | **Golden images** — hardened, pre-patched images gated by a vulnerability scan | Planned (Phase 5) |
 | 🚨 | **CVE-driven emergency patching** — a critical finding triggers an accelerated flow | Planned (Phase 6) |
 | 📊 | **Compliance and evidence** — dashboard, MTTP and audit-ready reports | Planned (Phase 6) |

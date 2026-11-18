@@ -11,12 +11,10 @@ Thanks for your interest in Patchgate! This guide explains how to propose change
 
 ## Development setup
 
-> Tooling is being set up in Phase 0. This section will list exact versions once it lands.
-
 Required tools:
 
-- Python 3.12
-- Terraform ≥ 1.9, `tflint`, `checkov`
+- Python 3.12 (`make setup` creates `.venv` and installs the dev dependencies)
+- Terraform ≥ 1.9, `tflint`, `checkov` 3.4.5 (same version as CI; `make security` uses Docker if available)
 - `shellcheck` and PowerShell 7 with `PSScriptAnalyzer`
 - `make`
 
