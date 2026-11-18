@@ -32,7 +32,7 @@ Patchgate is built with a **cloud-agnostic core** and **pluggable providers**: t
 | 📦 | **Application lifecycle** — app sets per instance (tag), pinned versions, install/upgrade/remove, prune, drift; configuration in DynamoDB managed with `patchgate-cli` | ✅ Done |
 | 🚀 | **Automatic bootstrap** — a new instance receives its agents and configuration, driven only by tags | ✅ Done (Linux & Windows) |
 | 🛡️ | **CIS hardening with drift correction** — manual changes are reverted to the baseline | ✅ Done (native controls engine, full CIS via Ansible on Linux and DSC on Windows) |
-| 🔁 | **Ring-based patching with approval gates** — snapshot before, health check after, automatic rollback | Planned (Phase 4b–4c) |
+| 🔁 | **Ring-based patching with approval gates** — snapshot before, health check after, automatic rollback | Planned (Phase 4c) |
 | 🖼️ | **Golden images** — hardened, pre-patched images gated by a vulnerability scan | Planned (Phase 5) |
 | 🚨 | **CVE-driven emergency patching** — a critical finding triggers an accelerated flow | Planned (Phase 6) |
 | 📊 | **Compliance and evidence** — dashboard, MTTP and audit-ready reports | Planned (Phase 6) |
