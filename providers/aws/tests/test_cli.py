@@ -325,3 +325,19 @@ def test_rollout_list_status_and_cancel(aws: ConfigStore) -> None:
     code, out, _ = run("rollout", "cancel", "AppSet-dotnet8-1a2b3c4d5e6f-1")
     assert code == 0 and "cancelled" in out
     assert sfn.describe_execution(executionArn=execution)["status"] == "ABORTED"
+
+
+def test_rollout_start_rolls_out_the_current_revision(aws: ConfigStore) -> None:
+    sfn = boto3.client("stepfunctions", region_name=REGION)
+    machine = sfn.create_state_machine(
+        name="patchgate-rollout",
+        definition=json.dumps({"StartAt": "P", "States": {"P": {"Type": "Pass", "End": True}}}),
+        roleArn="arn:aws:iam::123456789012:role/x",
+    )["stateMachineArn"]
+    code, out, _ = run("rollout", "start", "appset", "devtools")
+    assert code == 0 and "started for AppSet/devtools" in out
+    execution = sfn.list_executions(stateMachineArn=machine)["executions"][0]
+    started = json.loads(sfn.describe_execution(executionArn=execution["executionArn"])["input"])
+    record = aws.get("AppSet", "devtools")
+    assert record is not None and started["revision"] == record.revision
+    assert run("rollout", "start", "agent", "clamav")[0] == 1  # agents are not gated

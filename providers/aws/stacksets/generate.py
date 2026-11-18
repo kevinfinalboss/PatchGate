@@ -21,7 +21,11 @@ TEMPLATE = ROOT / "providers" / "aws" / "stacksets" / "spoke.template.json"
 # The template is uploaded to S3 (TemplateURL limit: 1 MB); stay far below it.
 MAX_TEMPLATE_BYTES = 460_800
 
-HUB_ROLE_NAMES = ["patchgate-hub-orchestrator", "patchgate-hub-resolver"]
+HUB_ROLE_NAMES = [
+    "patchgate-hub-orchestrator",
+    "patchgate-hub-resolver",
+    "patchgate-hub-rollout-fn",
+]
 LOG_GROUPS = {
     "BootstrapLogGroup": "/patchgate/bootstrap",
     "InstanceLogGroup": "/patchgate/instances",

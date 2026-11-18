@@ -16,7 +16,7 @@ variable "hub_event_bus_arn" {
 variable "hub_role_names" {
   description = "Hub roles allowed to assume Patchgate-Execution."
   type        = list(string)
-  default     = ["patchgate-hub-orchestrator", "patchgate-hub-resolver"]
+  default     = ["patchgate-hub-orchestrator", "patchgate-hub-resolver", "patchgate-hub-rollout-fn"]
 }
 
 variable "log_retention_days" {

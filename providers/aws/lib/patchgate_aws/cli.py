@@ -340,6 +340,23 @@ class Cli:
             self.print("  no approval requests (yet)")
         return 0
 
+    def cmd_rollout_start(self) -> int:
+        """Roll out the current revision again (after a failure, a cancel or new instances)."""
+        kind = kind_of(self.args.kind)
+        if not self.gated(kind):
+            raise CliError(f"{kind} changes are not rolled out (rollout policy kinds)")
+        record = self.store.get(kind, self.args.name)
+        if record is None:
+            raise CliError(f"{kind}/{self.args.name} not found")
+        name = f"{kind}-{self.args.name}"[:48] + f"-{record.revision[7:19]}-{int(time.time())}"
+        self.config_session.client("stepfunctions").start_execution(
+            stateMachineArn=self.rollout_machine(),
+            name=name,
+            input=json.dumps({"kind": kind, "name": self.args.name, "revision": record.revision}),
+        )
+        self.print(f"rollout {name} started for {kind}/{self.args.name} version {record.version}")
+        return 0
+
     def cmd_rollout_cancel(self) -> int:
         sfn = self.config_session.client("stepfunctions")
         sfn.stop_execution(
@@ -545,6 +562,9 @@ def parser() -> argparse.ArgumentParser:
     rsub.add_parser("list", help="recent rollouts")
     s = rsub.add_parser("status", help="a rollout and its approval requests")
     s.add_argument("execution")
+    s = rsub.add_parser("start", help="roll out the current revision again (e.g. after a failure)")
+    s.add_argument("kind")
+    s.add_argument("name")
     s = rsub.add_parser("cancel", help="stop a rollout (pending approvals are discarded)")
     s.add_argument("execution")
 
