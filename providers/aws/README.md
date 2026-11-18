@@ -81,7 +81,12 @@ patchgate-cli --config-profile hub rollout cancel AppSet-dotnet8-1a2b3c4d5e6f-17
 
 Approval emails come from Amazon SES. After the first hub deploy, click the verification email
 AWS sends to the sender address. While the account is in the SES sandbox, every approver address
-must be verified too (`aws sesv2 create-email-identity --email-identity <address>`). Accounts and approver
+must be verified too (`aws sesv2 create-email-identity --email-identity <address>`).
+
+For real use, send from an address on a domain you own, verified in SES with DKIM
+(`approval_sender_email`). With a free-mail sender such as `@gmail.com` (fine for the lab) the
+mail leaves Amazon's servers on behalf of a domain that did not authorise them, so providers
+tend to file approval emails as spam (seen in the lab with Gmail). Accounts and approver
 groups (people's emails) live only in the configuration table, never in Git. Instances in
 unregistered accounts are treated as the last (most protected) ring.
 
