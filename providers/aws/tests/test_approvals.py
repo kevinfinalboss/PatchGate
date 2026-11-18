@@ -242,3 +242,9 @@ def test_page_content_is_escaped(approvals: ModuleType, resumed: list[Any]) -> N
 def test_unknown_decision_is_refused(approvals: ModuleType, resumed: list[Any]) -> None:
     _, tokens = request(approvals)
     assert post(approvals, tokens["ana@example.com"], "maybe")["statusCode"] == 400
+
+
+def test_diff_lines_are_not_double_spaced(approvals: ModuleType) -> None:
+    rendered = approvals.diff_html("--- approved\n+++ proposed\n+    tree\n-    jq")
+    assert "\n" not in rendered
+    assert rendered.count('<span class="add">') == 1 and rendered.count('<span class="del">') == 1

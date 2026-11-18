@@ -304,7 +304,7 @@ def diff_html(diff: str) -> str:
             else ("del" if line.startswith("-") and not line.startswith("---") else "")
         )
         out.append(f'<span class="{css}">{html.escape(line) or "&nbsp;"}</span>')
-    return "\n".join(out)
+    return "".join(out)  # each line is a block-level span: newlines would add blank lines
 
 
 def details(item: dict[str, Any]) -> str:
